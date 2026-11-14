@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Dispositivos de Javier</title>
+  <link rel="stylesheet" href="./css/style.css">
+  <style>
+    html, body { overflow: auto; }
+    main { max-width: 520px; margin: 0 auto; padding: 28px 18px 60px; display: grid; gap: 18px; }
+    .card { background: #171c23; border-radius: 16px; padding: 22px; display: grid; gap: 12px; }
+    .card h1, .card h2 { margin: 0; font-size: 20px; }
+    .card p { margin: 0; color: var(--muted); }
+    input { font: inherit; padding: 13px; border-radius: 12px; border: 1px solid #2b3440; background: #0f1318; color: var(--fg); width: 100%; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    li { display: flex; gap: 10px; justify-content: space-between; align-items: center; background: #0f1318; border-radius: 12px; padding: 12px 14px; }
+    li small { color: var(--muted); display: block; }
+    li button { padding: 8px 12px; min-height: 36px; background: #5a2630; }
+    .msg { min-height: 1.4em; color: #ff8a8a; }
+    .ok { color: var(--ok); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" id="register">
+      <h1>Registrar este dispositivo</h1>
+      <p>Solo los dispositivos registrados pueden usar las herramientas privadas del avatar. Escribe tu clave una vez; este dispositivo queda autorizado.</p>
+      <form id="form">
+        <div style="display:grid;gap:10px">
+          <input id="name" placeholder="Nombre (ej. Mi iPhone)" maxlength="60" required>
+          <input id="secret" type="password" placeholder="Clave del dueño" autocomplete="off" required>
+          <button type="submit">Registrar</button>
+        </div>
+      </form>
+      <p class="msg" id="msg" role="alert"></p>
+    </section>
+    <section class="card" id="devices" hidden>
+      <h2>Dispositivos autorizados</h2>
+      <p id="me" class="ok"></p>
+      <ul id="list"></ul>
+      <p><a href="./">Ir al avatar</a></p>
+    </section>
+  </main>
+  <script type="module" src="./js/dueno.js"></script>
+</body>
+</html>

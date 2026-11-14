@@ -19,6 +19,13 @@ export class ConfigService {
   readonly greeting: string;
   readonly timezone: string;
   readonly defaultCity: string;
+  /** Clave para registrar dispositivos del dueño. Vacia = modo dueño desactivado. */
+  readonly ownerSecret: string;
+  readonly ownerDays: number;
+  readonly ownerPrompt: string;
+  readonly dataDir: string;
+  readonly planeMcpUrl: string;
+  readonly planeApiKey: string;
   readonly maxSessions: number;
   readonly sessionMaxSeconds: number;
   readonly idleSeconds: number;
@@ -55,6 +62,13 @@ export class ConfigService {
     this.idleSeconds = int('IDLE_SECONDS', 120, 10);
     this.bargeInWords = int('BARGE_IN_WORDS', 3, 1);
 
+    this.ownerSecret = str('OWNER_SECRET');
+    this.ownerDays = int('OWNER_DAYS', 90, 1);
+    this.dataDir = str('DATA_DIR', 'data');
+    this.planeMcpUrl = str('PLANE_MCP_URL');
+    this.planeApiKey = str('PLANE_API_KEY');
+    const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
+    this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';
     const file = str('SYSTEM_PROMPT_FILE', 'prompts/system.md');
     this.systemPrompt = str('SYSTEM_PROMPT') || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '');
     if (!this.systemPrompt) throw new Error('No hay system prompt: define SYSTEM_PROMPT o SYSTEM_PROMPT_FILE');

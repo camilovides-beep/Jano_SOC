@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
+import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 
 interface Tool {
   description: string;
@@ -29,7 +30,7 @@ async function getJson(url: string): Promise<any> {
 @Injectable()
 export class ToolsService {
   private readonly tools: Record<string, Tool>;
-  constructor(cfg: ConfigService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -91,11 +92,16 @@ export class ToolsService {
       },
     };
   }
-  /** Definiciones en el formato de la API (compatible con OpenAI). */
-  definitions() {
-    return Object.entries(this.tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
+  /**
+   * Definiciones en el formato de la API (compatible con OpenAI). Las herramientas privadas (Plane) solo se incluyen
+   * en sesiones del dueño: en una sesion publica el modelo ni siquiera sabe que existen.
+   */
+  async definitions(owner: boolean): Promise<unknown[]> {
+    const pub = Object.entries(this.tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
+    return owner ? [...pub, ...(await this.plane.definitions())] : pub;
   }
-  async run(name: string, rawArgs: string): Promise<string> {
+  async run(name: string, rawArgs: string, owner: boolean): Promise<string> {
+    if (name.startsWith(PLANE_PREFIX)) return owner ? this.plane.call(name, rawArgs) : 'Error: esa herramienta no existe.'; // doble control
     const tool = this.tools[name];
     if (!tool) return `Error: la herramienta ${name} no existe.`;
     let args: Record<string, unknown> = {};

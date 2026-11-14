@@ -1,7 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { OnGatewayConnection, WebSocketGateway } from '@nestjs/websockets';
 import { timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
+import { OwnerService } from '../owner/owner.service';
 import { ConfigService } from '../config/config.service';
 import { DeepSeekService } from '../llm/deepseek.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
@@ -22,6 +24,7 @@ interface Turn {
 interface Session {
   n: number;
   ready: boolean;
+  owner: boolean;        // dispositivo registrado del dueño: habilita las herramientas privadas
   stt?: SttStream;
   history: any[];
   finals: string[];      // tramos finales de la frase que el usuario esta diciendo
@@ -36,6 +39,7 @@ const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 /** Frase que se dice mientras una herramienta consulta su dato (evita el silencio de la espera). */
 const FILLERS: Record<string, string> = {
+  plane_: 'Déjame revisar en Plane.',
   clima: 'Déjame mirar cómo está el clima.',
   precio_dolar: 'Ya te digo a cómo está.',
 };
@@ -80,17 +84,20 @@ export class SessionGateway implements OnGatewayConnection {
   constructor(
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
+    private readonly ownerAuth: OwnerService,
   ) {}
 
-  handleConnection(client: WebSocket) {
-    const s: Session = { n: ++this.counter, ready: false, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), timers: [] };
+  handleConnection(client: WebSocket, req: IncomingMessage) {
+    // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
+    const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), timers: [] };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
       if (isBinary) { if (s.ready) s.stt?.send(raw as Buffer); return; }
       let msg: any; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!s.ready) {
         if (msg?.type !== 'hello') return;
-        if (!this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
+        if (!s.owner && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
         clearTimeout(authTimer); this.start(client, s);
         return;
@@ -103,8 +110,8 @@ export class SessionGateway implements OnGatewayConnection {
 
   private start(client: WebSocket, s: Session) {
     s.ready = true; this.active++;
-    this.log.log(`sesion #${s.n} abierta (${this.active}/${this.cfg.maxSessions})`);
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + TAG_RULES });
+    this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : '') + TAG_RULES });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal) => this.onTranscript(client, s, text, isFinal, speechFinal),
       onUtteranceEnd: () => this.commit(client, s),
@@ -115,11 +122,12 @@ export class SessionGateway implements OnGatewayConnection {
     s.timers.push(setInterval(() => {
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
-    this.send(client, { type: 'ready' });
-    if (this.cfg.greeting) {
+    this.send(client, { type: 'ready', owner: s.owner });
+    const greeting = s.owner ? 'Hola Javier, aquí estoy. ¿Qué revisamos?' : this.cfg.greeting;
+    if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
-      this.say(client, s, turn, this.cfg.greeting);
+      this.say(client, s, turn, greeting);
       void this.finish(client, s, turn, 'saludo');
     }
   }
@@ -178,10 +186,10 @@ export class SessionGateway implements OnGatewayConnection {
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
     try {
       let buffer = '';
-      for (let round = 0; round < 4; round++) {
+      for (let round = 0; round < (s.owner ? 6 : 4); round++) {
         let toolCalls: { id: string; name: string; arguments: string }[] = [];
         let text = '';
-        for await (const ev of this.llm.chat(s.history, this.tools.definitions(), turn.ctrl.signal)) {
+        for await (const ev of this.llm.chat(s.history, await this.tools.definitions(s.owner), turn.ctrl.signal)) {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
           turn.tLlm ??= Date.now();
           text += ev.delta; buffer += ev.delta;
@@ -195,9 +203,9 @@ export class SessionGateway implements OnGatewayConnection {
         if (!toolCalls.length) break;
         s.history.push({ role: 'assistant', content: text || null, tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) });
         // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
-        if (!turn.spoken) this.say(client, s, turn, FILLERS[toolCalls[0].name] ?? 'Dame un segundo.');
+        if (!turn.spoken) this.say(client, s, turn, FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
         for (const c of toolCalls) {
-          const result = await this.tools.run(c.name, c.arguments);
+          const result = await this.tools.run(c.name, c.arguments, s.owner);
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });
         }

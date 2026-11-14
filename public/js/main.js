@@ -40,6 +40,7 @@ function onMessage(msg) {
   switch (msg.type) {
     case 'ready':
       live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
+      $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
       break;
     case 'error':
@@ -78,7 +79,7 @@ function shutdown(message) {
   retryAt = Math.max(retryAt, performance.now() + 2500);
   stopSpeech(); backdrop.show(null); setState('idle');
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
-  $('mic').hidden = true; $('gate').hidden = false;
+  $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
   $('gate-text').textContent = armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');

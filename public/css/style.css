@@ -23,6 +23,8 @@ button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: rgba(255, 255, 255, .12); }
 .toggle { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
 .gate { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 13, .72); backdrop-filter: blur(6px); padding: 20px; }
+.owner { margin-left: auto; margin-right: 8px; padding: 8px 14px; border-radius: 999px; background: rgba(79, 140, 255, .28); border: 1px solid rgba(79, 140, 255, .7); font-size: 14px; }
+.owner[hidden] { display: none; }
 .gate[hidden], .mic[hidden], .gate-card input[hidden] { display: none; }
 .gate-card { width: min(420px, 100%); background: #171c23; border-radius: 18px; padding: 26px; display: grid; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
 .gate-card h1 { margin: 0; font-size: 22px; }

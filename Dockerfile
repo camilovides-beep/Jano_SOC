@@ -18,6 +18,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
 COPY prompts ./prompts
 COPY package.json ./
+# Lista de dispositivos del dueño. Montar un volumen en /app/data para que sobreviva a los despliegues.
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD wget -qO- "http://127.0.0.1:${PORT}/health" || exit 1

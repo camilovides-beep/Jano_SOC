@@ -7,16 +7,19 @@ import { SessionGateway } from './session/session.gateway';
 import { DeepSeekService } from './llm/deepseek.service';
 import { DeepgramService } from './stt/deepgram.service';
 import { ToolsService } from './tools/tools.service';
+import { OwnerController } from './owner/owner.controller';
+import { OwnerService } from './owner/owner.service';
+import { PlaneMcpService } from './mcp/plane-mcp.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
 
 @Module({
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/health'],
+      exclude: ['/health', '/owner/{*path}'],
     }),
   ],
-  controllers: [HealthController],
-  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, SessionGateway],
+  controllers: [HealthController, OwnerController],
+  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, SessionGateway],
 })
 export class AppModule {}
