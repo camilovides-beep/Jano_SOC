@@ -17,8 +17,8 @@ const MAX_MEDIA = 16 * 1024 * 1024;
  * Verificado el 2026-11-14 con la documentacion y llamadas reales:
  *  - Meta: GET /{media-id} -> {url, mime_type}; la url caduca a los 5 min y se descarga con el mismo Bearer.
  *    POST /{phone-id}/media multipart (messaging_product, type, file) -> {id}. Audio admitido: audio/ogg SOLO con Opus y mono.
- *  - Deepgram pre-grabado: POST /v1/listen con el audio en el cuerpo; nova-3 + language=multi devuelve
- *    alternatives[0].languages. Probado con Ogg/Opus.
+ *  - Deepgram pre-grabado: POST /v1/listen con el audio en el cuerpo. Probado con Ogg/Opus. Se fuerza language=es:
+ *    con language=multi una nota de voz en espanol salio detectada como gallego (gl) y el agente respondio en gallego.
  *  - DeepSeek deepseek-flash acepta imagenes (content con image_url, data URL JPEG/PNG/GIF/WebP).
  *  - ElevenLabs POST /v1/text-to-speech/{voice}?output_format=opus_48000_32 -> Ogg/Opus mono 48 kHz.
  */
@@ -56,7 +56,7 @@ export class N8nController {
     const caption = String(body?.caption ?? '').trim().slice(0, 1000);
 
     if (body?.type === 'audio') {
-      const q = new URLSearchParams({ model: this.cfg.deepgramModel, language: this.cfg.deepgramLanguage, smart_format: 'true' });
+      const q = new URLSearchParams({ model: this.cfg.deepgramModel, language: 'es', smart_format: 'true' });
       const res = await fetch(`https://api.deepgram.com/v1/listen?${q}`, {
         method: 'POST', headers: { Authorization: `Token ${this.cfg.deepgramApiKey}`, 'Content-Type': mime.split(';')[0] || 'audio/ogg' },
         body: new Uint8Array(buf), signal: AbortSignal.timeout(30000),
@@ -65,7 +65,7 @@ export class N8nController {
       if (!res.ok) throw new HttpException(`Deepgram respondió ${res.status}`, 502);
       const alt = d.results?.channels?.[0]?.alternatives?.[0] ?? {};
       const text = String(alt.transcript ?? '').trim();
-      const language = String(alt.languages?.[0] ?? d.results?.channels?.[0]?.detected_language ?? 'es').slice(0, 2);
+      const language = 'es'; // WhatsApp siempre en espanol latino (pedido por Javier el 2026-11-14)
       this.log.log(`n8n: audio transcrito (${buf.length} bytes, ${Date.now() - t0} ms, ${language})`);
       return { text, language, empty: !text };
     }
@@ -98,7 +98,7 @@ export class N8nController {
 
     const tts = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${this.cfg.elevenVoiceId}?output_format=opus_48000_32`, {
       method: 'POST', headers: { 'xi-api-key': this.cfg.elevenApiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: voiceText(text), model_id: this.cfg.elevenModelId, language_code: String(body?.language ?? 'es').slice(0, 2) }),
+      body: JSON.stringify({ text: voiceText(text), model_id: this.cfg.elevenModelId, language_code: 'es' }),
       signal: AbortSignal.timeout(30000),
     });
     if (!tts.ok) throw new HttpException(`ElevenLabs respondió ${tts.status}`, 502);
