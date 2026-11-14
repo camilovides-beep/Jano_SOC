@@ -52,7 +52,11 @@ export class CallsController {
         if (change?.field !== 'calls') continue; // mensajes y demas eventos no se tocan aqui
         const v = change.value ?? {};
         if (this.cfg.whatsappPhoneNumberId && v.metadata?.phone_number_id && v.metadata.phone_number_id !== this.cfg.whatsappPhoneNumberId) continue;
-        for (const call of v.calls ?? []) void this.onCall(call, v.contacts?.[0]?.profile?.name).catch((e) => this.log.error(`llamada ${call?.id}: ${e.message}`));
+        for (const call of v.calls ?? []) {
+          // WhatsApp a veces no manda "from" en la llamada (por ejemplo con nombre de usuario): se toma el wa_id del contacto.
+          if (!call.from && v.contacts?.[0]?.wa_id) call.from = v.contacts[0].wa_id;
+          void this.onCall(call, v.contacts?.[0]?.profile?.name).catch((e) => this.log.error(`llamada ${call?.id}: ${e.message}`));
+        }
       }
     }
     return { ok: true };
