@@ -39,7 +39,7 @@ export async function createAvatar(canvas) {
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     renderer.setSize(w, h, false); camera.aspect = w / h;
     const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const dist = Math.max(size.y / 2 / t, size.x / 2 / (t * camera.aspect)) * 1.08;
+    const dist = Math.max(size.y / 2 / t, size.x / 2 / (t * camera.aspect)) * 1.2;
     camera.position.set(0, center.y + size.y * 0.02, center.z + dist); camera.lookAt(0, center.y - size.y * 0.02, center.z);
     camera.updateProjectionMatrix();
   }
@@ -50,6 +50,9 @@ export async function createAvatar(canvas) {
   let gazeAt = 0; const gaze = { x: 0, y: 0 }, gazeGoal = { x: 0, y: 0 };
   let browPulse = 0, brow = 0, smile = 0;
   const head = { x: 0, y: 0, z: 0 };
+  // Reaccion del momento (sorpresa, alegria, risa, pena, pensativo): dura unos segundos y se mezcla con lo demas.
+  const expr = { name: '', t: 0, dur: 2.8 }; let exprK = 0;
+  const exprMouth = {};
   // Seguimiento del puntero (mouse o dedo), como el Memoji: la cabeza y los ojos giran hacia donde esta.
   const pointer = { x: 0, y: 0, at: -100 }, follow = { x: 0, y: 0 };
   const onPointer = (ev) => {
@@ -70,7 +73,6 @@ export async function createAvatar(canvas) {
       blink = blinkT < d ? Math.sin((blinkT / d) * Math.PI) : 0;
       if (blinkT >= d) { blinkT = -1; blinkAt = clock + (Math.random() < 0.18 ? rnd(0.12, 0.25) : rnd(1.8, 5.5)); }
     }
-    setMorph('eyeBlink', Math.min(1, blink * 1.05));
 
     // Mirada: hacia la camara, con pequenos saltos; al pensar se va hacia arriba y a un lado.
     if (clock >= gazeAt) {
@@ -92,6 +94,18 @@ export async function createAvatar(canvas) {
     const kf = 1 - Math.exp(-dt / 0.12);
     follow.x += (pointer.x * active - follow.x) * kf; follow.y += (pointer.y * active - follow.y) * kf;
     goal.y += follow.x * 0.5; goal.x += -follow.y * 0.32; goal.z += -follow.x * 0.06;
+    // Reaccion: entra rapido, se sostiene y sale suave.
+    if (expr.name) { expr.t += dt; if (expr.t >= expr.dur) expr.name = ''; }
+    const env = expr.name ? Math.min(1, expr.t / 0.18) * Math.min(1, (expr.dur - expr.t) / 0.6) : 0;
+    exprK += (env - exprK) * (1 - Math.exp(-dt / 0.07));
+    const e = expr.name, k = exprK;
+    let exBrow = 0, exSmile = 0, exBlink = 0, back = 0, lift = 0; exprMouth.viseme_O = 0;
+    if (e === 'sorpresa') { exBrow = 1; exprMouth.viseme_O = 0.55 * k; back = 0.16; goal.x += -0.07 * k; }
+    else if (e === 'alegria') { exSmile = 1; exBrow = 0.35; goal.z += 0.07 * k; lift = Math.abs(Math.sin(expr.t * 7)) * 0.035; }
+    else if (e === 'risa') { exSmile = 1; exBlink = 0.4; goal.x += Math.sin(expr.t * 16) * 0.05 * k; lift = Math.abs(Math.sin(expr.t * 16)) * 0.02; }
+    else if (e === 'pena') { exBlink = 0.3; goal.x += 0.13 * k; goal.z += -0.05 * k; }
+    else if (e === 'pensativo') { exBrow = 0.45; goal.z += 0.08 * k; goal.y += 0.1 * k; gazeGoal.x = -0.2; gazeGoal.y = 0.22; }
+    pivot.position.set(0, lift * k, -back * k);
     const kh = 1 - Math.exp(-dt / 0.14);
     head.x += (goal.x - head.x) * kh; head.y += (goal.y - head.y) * kh; head.z += (goal.z - head.z) * kh;
     pivot.rotation.set(head.x, head.y, head.z);
@@ -101,9 +115,10 @@ export async function createAvatar(canvas) {
     // Cejas: pulso al iniciar una frase; algo levantadas al escuchar.
     browPulse = Math.max(0, browPulse - dt / 0.6);
     const browGoal = Math.max(browPulse > 0 ? Math.sin(Math.min(1, browPulse) * Math.PI) * 0.8 : 0, listening ? 0.22 : 0, thinking ? 0.12 : 0);
-    brow += (browGoal - brow) * (1 - Math.exp(-dt / 0.08)); setMorph('browUp', brow);
+    brow += (browGoal - brow) * (1 - Math.exp(-dt / 0.08)); setMorph('browUp', Math.max(brow, exBrow * k));
+    setMorph('eyeBlink', Math.min(1, Math.max(blink * 1.05, exBlink * k)));
     const smileGoal = listening ? 0.25 : (state === 'idle' ? 0.15 : 0);
-    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', smile);
+    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile, exSmile * k));
 
     renderer.render(scene, camera);
   }
@@ -112,6 +127,9 @@ export async function createAvatar(canvas) {
     update, setMorph,
     setState(s) { if (s !== state) { state = s; gazeAt = 0; } },
     raiseBrows() { browPulse = 1; },
+    react(name) { expr.name = name; expr.t = 0; },
+    /** Forma de boca que pide la reaccion (se combina con el lip sync). */
+    exprMouth,
     morphNames: [...morphs.keys()],
   };
 }

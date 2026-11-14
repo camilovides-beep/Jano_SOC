@@ -17,6 +17,7 @@ interface Turn {
   samples: number;       // muestras de audio ya enviadas en este turno (para encadenar los tiempos de cada frase)
   chain: Promise<void>;  // emision en orden de las frases
   spoken: string;
+  tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
 }
 interface Session {
   n: number;
@@ -33,12 +34,31 @@ interface Session {
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
+/** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
+const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo']);
+const SCENES = new Set(['matrix']);
+const TAG_HEAD = /^\s*\[(r|f):([a-zñ_]+)\]\s*/i;
+const TAG_ANY = /\[(r|f):[^\]]*\]/gi;
+/** Se agrega al system prompt: el protocolo de etiquetas depende del codigo, no de la personalidad. */
+const TAG_RULES = `
+
+Reacciones (obligatorio): empieza SIEMPRE tu respuesta con una etiqueta entre corchetes que indique tu reacción a lo que acaba de decir la persona:
+[r:sorpresa] si dijo una grosería, un insulto o algo subido de tono.
+[r:alegria] si te felicita, te agradece o te dice algo lindo.
+[r:risa] si cuenta un chiste o algo gracioso.
+[r:pena] si cuenta algo triste o una mala noticia.
+[r:pensativo] si la pregunta es difícil o te hace dudar.
+[r:neutral] en cualquier otro caso.
+Además, si tu respuesta habla de programación, software, tecnología o inteligencia artificial, agrega después la etiqueta [f:matrix].
+Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo: "[r:alegria] ¡Gracias, qué amable!"`;
+
 /**
  * WebSocket del navegador.
  *  cliente -> JSON { type: 'hello', code? } | { type: 'playback', playing } ; binario: PCM16 mono 16 kHz del microfono
  *  servidor -> { type: 'ready' } | { type: 'error', reason }
  *              { type: 'user_partial', text } | { type: 'user_final', text }
  *              { type: 'speech_start', id, sampleRate } , { type: 'audio', id, audio, align? } ... , { type: 'speech_end', id }
+ *              { type: 'reaction', name } | { type: 'scene', name }  (gesto y emojis / fondo, segun lo que pidio el modelo)
  *              { type: 'interrupt' }  (el usuario hablo encima: cortar el audio)
  */
 @WebSocketGateway({ path: '/ws' })
@@ -73,7 +93,7 @@ export class SessionGateway implements OnGatewayConnection {
   private start(client: WebSocket, s: Session) {
     s.ready = true; this.active++;
     this.log.log(`sesion #${s.n} abierta (${this.active}/${this.cfg.maxSessions})`);
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + TAG_RULES });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal) => this.onTranscript(client, s, text, isFinal, speechFinal),
       onUtteranceEnd: () => this.commit(client, s),
@@ -134,7 +154,7 @@ export class SessionGateway implements OnGatewayConnection {
   // ---------- respuesta ----------
   private newTurn(s: Session): Turn {
     s.turn?.ctrl.abort();
-    const turn: Turn = { id: ++s.turnId, ctrl: new AbortController(), t0: Date.now(), samples: 0, chain: Promise.resolve(), spoken: '' };
+    const turn: Turn = { id: ++s.turnId, ctrl: new AbortController(), t0: Date.now(), samples: 0, chain: Promise.resolve(), spoken: '', tags: '' };
     s.turn = turn; s.clientPlaying = true;
     return turn;
   }
@@ -154,6 +174,9 @@ export class SessionGateway implements OnGatewayConnection {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
           turn.tLlm ??= Date.now();
           text += ev.delta; buffer += ev.delta;
+          buffer = this.takeTags(client, turn, buffer);
+          const head = buffer.trimStart();
+          if (head.startsWith('[') && !head.includes(']') && head.length < 24) continue; // etiqueta a medio llegar
           let cut: number;
           while ((cut = this.sentenceEnd(buffer)) > 0) { this.say(client, s, turn, buffer.slice(0, cut)); buffer = buffer.slice(cut); }
         }
@@ -176,6 +199,19 @@ export class SessionGateway implements OnGatewayConnection {
     await this.finish(client, s, turn, 'turno');
   }
 
+  /** Saca las etiquetas [r:...] y [f:...] del inicio del texto y avisa al navegador. */
+  private takeTags(client: WebSocket, turn: Turn, buffer: string): string {
+    let m: RegExpMatchArray | null;
+    while ((m = buffer.match(TAG_HEAD))) {
+      const kind = m[1].toLowerCase(), name = m[2].toLowerCase();
+      turn.tags += `[${kind}:${name}]`;
+      if (kind === 'r' && REACTIONS.has(name)) this.send(client, { type: 'reaction', name });
+      if (kind === 'f' && SCENES.has(name)) this.send(client, { type: 'scene', name });
+      buffer = buffer.slice(m[0].length);
+    }
+    return buffer;
+  }
+
   /** Fin de la primera frase completa del texto acumulado (0 si aun no hay una). */
   private sentenceEnd(buf: string): number {
     const re = /[.!?…]+["')\]]*\s|\n/g;
@@ -186,7 +222,7 @@ export class SessionGateway implements OnGatewayConnection {
 
   /** Manda una frase a voz. La peticion a ElevenLabs sale de inmediato; el audio se entrega al navegador en orden. */
   private say(client: WebSocket, s: Session, turn: Turn, sentence: string) {
-    const text = sentence.trim();
+    const text = sentence.replace(TAG_ANY, ' ').replace(/\s+/g, ' ').trim(); // por si el modelo pone una etiqueta fuera de lugar
     if (!text || turn.ctrl.signal.aborted) return;
     const first = !turn.spoken;
     turn.spoken += (turn.spoken ? ' ' : '') + text;
@@ -218,7 +254,7 @@ export class SessionGateway implements OnGatewayConnection {
     await turn.chain;
     const aborted = turn.ctrl.signal.aborted;
     if (!aborted) this.send(client, { type: 'speech_end', id: turn.id });
-    if (turn.spoken) s.history.push({ role: 'assistant', content: turn.spoken + (aborted ? ' [interrumpido]' : '') });
+    if (turn.spoken) s.history.push({ role: 'assistant', content: (turn.tags ? turn.tags + ' ' : '') + turn.spoken });
     if (s.turn === turn) s.turn = undefined;
     const ms = (t?: number) => (t ? `${t - turn.t0} ms` : 'n/d');
     this.log.log(`sesion #${s.n} ${kind} #${turn.id}${aborted ? ' (interrumpido)' : ''}: primer token LLM ${ms(turn.tLlm)}, primer audio ${ms(turn.tAudio)}, audio ${(turn.samples / TTS_SAMPLE_RATE).toFixed(1)} s`);

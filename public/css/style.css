@@ -29,3 +29,12 @@ button.ghost { background: rgba(255, 255, 255, .12); }
 .gate-card p { margin: 0; color: var(--muted); }
 .gate-card input { font: inherit; padding: 14px; border-radius: 12px; border: 1px solid #2b3440; background: #0f1318; color: var(--fg); }
 .gate-error { color: #ff8a8a !important; min-height: 1.4em; }
+#matrix { position: fixed; inset: 0; width: 100vw; height: 100dvh; opacity: 0; transition: opacity 1.2s ease; pointer-events: none; }
+#matrix.on { opacity: .55; }
+.fx { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.emoji { position: absolute; opacity: 0; transform: translate(-50%, 0) scale(.4); animation: emoji-float 2.4s ease-out forwards; will-change: transform, opacity; }
+@keyframes emoji-float {
+  12% { opacity: 1; transform: translate(-50%, -10px) scale(1.15) rotate(var(--rot)); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), -170px) scale(1) rotate(var(--rot)); }
+}
