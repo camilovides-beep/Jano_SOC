@@ -45,6 +45,9 @@ export class ConfigService {
   readonly whatsappAppSecret: string;
   readonly whatsappForwardSecret: string;
   /** Llamadas: modo (rechazar | prueba), IP publica del VPS, rango de puertos UDP del audio y limites. */
+  /** n8n: webhook al que se reenvian los mensajes de WhatsApp y secreto compartido (cabecera X-Forward-Secret). */
+  readonly n8nWebhookUrl: string;
+  readonly n8nSecret: string;
   readonly callMode: string;
   readonly callPublicIp: string;
   readonly callPortMin: number;
@@ -122,6 +125,8 @@ export class ConfigService {
     this.whatsappVerifyToken = str('WHATSAPP_VERIFY_TOKEN');
     this.whatsappAppSecret = str('WHATSAPP_APP_SECRET');
     this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
+    this.n8nWebhookUrl = str('N8N_WEBHOOK_URL');
+    this.n8nSecret = str('N8N_SECRET');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     this.callPublicIp = str('CALL_PUBLIC_IP');
     this.callPortMin = int('CALL_UDP_PORT_MIN', 40000, 1024);

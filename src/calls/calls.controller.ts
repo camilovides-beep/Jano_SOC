@@ -47,6 +47,9 @@ export class CallsController {
     if (!fromMeta && !fromForwarder) throw new HttpException('firma invalida', 401);
 
     let body: any; try { body = JSON.parse(raw.toString('utf8')); } catch { return { ok: true }; }
+    // Intermediario: lo que no son llamadas (mensajes, estados) se reenvia tal cual a n8n, que responde por texto.
+    const hasMessages = (body?.entry ?? []).some((e: any) => (e?.changes ?? []).some((c: any) => c?.field === 'messages'));
+    if (hasMessages && fromMeta && this.cfg.n8nWebhookUrl) void this.forwardToN8n(raw);
     for (const entry of body?.entry ?? []) {
       for (const change of entry?.changes ?? []) {
         if (change?.field !== 'calls') continue; // mensajes y demas eventos no se tocan aqui
@@ -172,6 +175,16 @@ export class CallsController {
       this.log.log(msg.replace(/\n/g, ' | '));
       void this.leads.telegram(msg);
     }
+  }
+
+  private async forwardToN8n(raw: Buffer) {
+    try {
+      const res = await fetch(this.cfg.n8nWebhookUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forward-Secret': this.cfg.n8nSecret }, body: new Uint8Array(raw),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) this.log.warn(`n8n respondió ${res.status} al reenviar un mensaje`);
+    } catch (e) { this.log.warn(`no se pudo reenviar el mensaje a n8n: ${(e as Error).name}`); }
   }
 
   /** POST /{phone-number-id}/calls con action pre_accept | accept | reject | terminate. Devuelve '' o el motivo del fallo. */

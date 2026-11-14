@@ -14,6 +14,7 @@ import { LeadsService } from './leads/leads.service';
 import { CardsService } from './cards/cards.service';
 import { CallsController } from './calls/calls.controller';
 import { KnowledgeService } from './knowledge/knowledge.service';
+import { KnowledgeController } from './knowledge/knowledge.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
@@ -22,10 +23,10 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}'],
+      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}'],
     }),
   ],
-  controllers: [HealthController, OwnerController, CallsController],
+  controllers: [HealthController, OwnerController, CallsController, KnowledgeController],
   providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}
