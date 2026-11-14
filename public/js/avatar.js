@@ -78,6 +78,7 @@ export async function createAvatar(canvas) {
     if (clock >= gazeAt) {
       gazeAt = clock + rnd(0.7, 2.6);
       if (state === 'thinking') { gazeGoal.x = rnd(-0.22, -0.12); gazeGoal.y = rnd(0.18, 0.3) * (Math.random() < 0.5 ? -1 : 1); }
+      else if (state === 'idle') { gazeGoal.x = rnd(-0.08, 0.06); gazeGoal.y = rnd(-0.3, 0.3); } // en espera: mira alrededor
       else { gazeGoal.x = rnd(-0.025, 0.025); gazeGoal.y = rnd(-0.04, 0.04); }
     }
     const kg = 1 - Math.exp(-dt / 0.05); gaze.x += (gazeGoal.x - gaze.x) * kg; gaze.y += (gazeGoal.y - gaze.y) * kg;
@@ -89,6 +90,7 @@ export async function createAvatar(canvas) {
       y: Math.sin(clock * 0.43) * 0.035 + (speaking ? Math.sin(clock * 1.7) * 0.03 : 0) + (thinking ? 0.09 : 0),
       z: Math.sin(clock * 0.31) * 0.012 + (listening ? 0.03 : 0) + (thinking ? -0.035 : 0),
     };
+    if (state === 'idle') { goal.y += Math.sin(clock * 0.23) * 0.2; goal.x += Math.sin(clock * 0.17) * 0.04; } // en espera: gira despacio buscando a alguien
     // Si el puntero lleva un rato quieto, vuelve a mirar al frente.
     const active = clock - pointer.at < 4 ? 1 : 0;
     const kf = 1 - Math.exp(-dt / 0.12);
@@ -103,6 +105,8 @@ export async function createAvatar(canvas) {
     if (e === 'sorpresa') { exBrow = 1; exprMouth.viseme_O = 0.55 * k; back = 0.16; goal.x += -0.07 * k; }
     else if (e === 'alegria') { exSmile = 1; exBrow = 0.35; goal.z += 0.07 * k; lift = Math.abs(Math.sin(expr.t * 7)) * 0.035; }
     else if (e === 'risa') { exSmile = 1; exBlink = 0.4; goal.x += Math.sin(expr.t * 16) * 0.05 * k; lift = Math.abs(Math.sin(expr.t * 16)) * 0.02; }
+    else if (e === 'celebracion') { exSmile = 1; exBrow = 0.7; lift = Math.abs(Math.sin(expr.t * 9)) * 0.06; goal.z += Math.sin(expr.t * 9) * 0.05 * k; }
+    else if (e === 'despedida') { exSmile = 0.9; exBrow = 0.3; goal.z += Math.sin(expr.t * 6) * 0.09 * k; goal.x += 0.05 * k; }
     else if (e === 'pena') { exSad = 1; exBlink = 0.22; goal.x += 0.11 * k; goal.z += -0.05 * k; }
     else if (e === 'pensativo') { exFrown = 0.35; exBrow = 0.3; goal.z += 0.08 * k; goal.y += 0.1 * k; gazeGoal.x = -0.2; gazeGoal.y = 0.22; }
     pivot.position.set(0, lift * k, -back * k);

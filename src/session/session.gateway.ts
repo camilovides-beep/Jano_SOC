@@ -35,8 +35,8 @@ interface Session {
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
-const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo']);
-const SCENES = new Set(['matrix']);
+const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
+const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);
 const TAG_HEAD = /^\s*\[(r|f):([a-zñ_]+)\]\s*/i;
 const TAG_ANY = /\[(r|f):[^\]]*\]/gi;
 /** Se agrega al system prompt: el protocolo de etiquetas depende del codigo, no de la personalidad. */
@@ -48,8 +48,13 @@ Reacciones (obligatorio): empieza SIEMPRE tu respuesta con una etiqueta entre co
 [r:risa] si cuenta un chiste o algo gracioso.
 [r:pena] si cuenta algo triste o una mala noticia.
 [r:pensativo] si la pregunta es difícil o te hace dudar.
+[r:celebracion] si cuenta una buena noticia o un logro que merece celebrarse.
+[r:despedida] si se está despidiendo.
 [r:neutral] en cualquier otro caso.
-Además, si tu respuesta habla de programación, software, tecnología o inteligencia artificial, agrega después la etiqueta [f:matrix].
+Además, según el tema de TU respuesta, puedes agregar después UNA etiqueta de fondo:
+[f:matrix] si hablas de programación, software, tecnología o inteligencia artificial.
+[f:estrellas] si hablas del espacio, la ciencia, el futuro o los sueños.
+[f:atardecer] si hablas de Sucre, la costa, Colombia, viajes, familia o temas personales y tranquilos.
 Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo: "[r:alegria] ¡Gracias, qué amable!"`;
 
 /**
