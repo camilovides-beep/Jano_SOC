@@ -40,6 +40,10 @@ export class ConfigService {
   readonly whatsappHeaderImageUrl: string;
   readonly whatsappApiVersion: string;
   readonly whatsappDefaultCountry: string;
+  /** Webhook de llamadas: token de verificacion, secreto de la app (firma de Meta) y secreto para eventos reenviados. */
+  readonly whatsappVerifyToken: string;
+  readonly whatsappAppSecret: string;
+  readonly whatsappForwardSecret: string;
   /** Base de conocimiento: embeddings de NVIDIA + Qdrant. Sin clave o sin direccion = desactivada. */
   readonly nvidiaApiKey: string;
   readonly embedModel: string;
@@ -108,6 +112,9 @@ export class ConfigService {
     this.whatsappHeaderImageUrl = str('WHATSAPP_HEADER_IMAGE_URL');
     this.whatsappApiVersion = str('WHATSAPP_API_VERSION', 'v27.0');
     this.whatsappDefaultCountry = str('WHATSAPP_DEFAULT_COUNTRY', '57');
+    this.whatsappVerifyToken = str('WHATSAPP_VERIFY_TOKEN');
+    this.whatsappAppSecret = str('WHATSAPP_APP_SECRET');
+    this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
     this.nvidiaApiKey = str('NVIDIA_API_KEY');
     this.embedModel = str('EMBED_MODEL', 'nvidia/nemotron-3.5-embed-8b');
     this.qdrantUrl = str('QDRANT_URL').replace(/\/+$/, '');

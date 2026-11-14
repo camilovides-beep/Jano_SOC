@@ -10,7 +10,7 @@ import { AppModule } from './app.module';
 import { ConfigService } from './config/config.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true }); // el cuerpo crudo se usa para validar la firma del webhook
   app.useWebSocketAdapter(new WsAdapter(app));
   app.enableShutdownHooks();
   const cfg = app.get(ConfigService);
