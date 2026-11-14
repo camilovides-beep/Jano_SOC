@@ -19,6 +19,7 @@ interface Turn {
   samples: number;       // muestras de audio ya enviadas en este turno (para encadenar los tiempos de cada frase)
   chain: Promise<void>;  // emision en orden de las frases
   spoken: string;
+  sceneLocked?: boolean; // una herramienta ya puso el fondo de este turno (el del clima manda sobre el del modelo)
   tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
 }
 interface Session {
@@ -60,7 +61,7 @@ const FILLERS: Record<string, string> = {
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
-const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);
+const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);   // los que puede pedir el modelo; los del clima los pone la herramienta
 const TAG_HEAD = /^\s*\[(r|f):([a-zñ_]+)\]\s*/i;
 const TAG_ANY = /\[(r|f):[^\]]*\]/gi;
 /** Se agrega al system prompt: el protocolo de etiquetas depende del codigo, no de la personalidad. */
@@ -221,7 +222,14 @@ export class SessionGateway implements OnGatewayConnection {
         for (const c of toolCalls) {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
-          else { result = await this.tools.run(c.name, c.arguments, s.owner); if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++; }
+          else {
+            const out = await this.tools.run(c.name, c.arguments, s.owner);
+            result = out.text;
+            if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++;
+            // Efectos que dependen del dato consultado: fondo del clima, billetes del dolar.
+            if (out.scene && !turn.ctrl.signal.aborted) { turn.sceneLocked = true; this.send(client, { type: 'scene', name: out.scene }); }
+            if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
+          }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });
         }
@@ -243,7 +251,7 @@ export class SessionGateway implements OnGatewayConnection {
       const kind = m[1].toLowerCase(), name = m[2].toLowerCase();
       turn.tags += `[${kind}:${name}]`;
       if (kind === 'r' && REACTIONS.has(name)) this.send(client, { type: 'reaction', name });
-      if (kind === 'f' && SCENES.has(name)) this.send(client, { type: 'scene', name });
+      if (kind === 'f' && SCENES.has(name) && !turn.sceneLocked) this.send(client, { type: 'scene', name });
       buffer = buffer.slice(m[0].length);
     }
     return buffer;

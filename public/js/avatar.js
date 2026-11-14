@@ -107,6 +107,7 @@ export async function createAvatar(canvas) {
     else if (e === 'risa') { exSmile = 1; exBlink = 0.4; goal.x += Math.sin(expr.t * 16) * 0.05 * k; lift = Math.abs(Math.sin(expr.t * 16)) * 0.02; }
     else if (e === 'celebracion') { exSmile = 1; exBrow = 0.7; lift = Math.abs(Math.sin(expr.t * 9)) * 0.06; goal.z += Math.sin(expr.t * 9) * 0.05 * k; }
     else if (e === 'despedida') { exSmile = 0.9; exBrow = 0.3; goal.z += Math.sin(expr.t * 6) * 0.09 * k; goal.x += 0.05 * k; }
+    else if (e === 'dinero') { exBrow = 0.6; exSmile = 0.6; }
     else if (e === 'pena') { exSad = 1; exBlink = 0.22; goal.x += 0.11 * k; goal.z += -0.05 * k; }
     else if (e === 'pensativo') { exFrown = 0.35; exBrow = 0.3; goal.z += 0.08 * k; goal.y += 0.1 * k; gazeGoal.x = -0.2; gazeGoal.y = 0.22; }
     pivot.position.set(0, lift * k, -back * k);

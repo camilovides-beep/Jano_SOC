@@ -3,10 +3,20 @@ import { ConfigService } from '../config/config.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 
+/** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
+export interface ToolResult { text: string; scene?: string; reaction?: string; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
-  run(args: Record<string, unknown>): Promise<string> | string;
+  run(args: Record<string, unknown>): Promise<string | ToolResult> | string | ToolResult;
+}
+
+/** Fondo segun el codigo de tiempo (OMM) y si es de dia. */
+function weatherScene(code: number, isDay: boolean): string {
+  if (code >= 95) return 'tormenta';
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'lluvia';
+  if (code === 3 || code === 45 || code === 48 || (code >= 71 && code <= 86)) return 'nublado';
+  return isDay ? 'soleado' : 'estrellas'; // despejado o pocas nubes
 }
 
 /** Codigos de tiempo de la OMM que devuelve Open-Meteo. */
@@ -55,17 +65,17 @@ export class ToolsService {
           if (!place) return `No encontré la ciudad "${ciudad}".`;
           const w = await getJson(
             `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
-              '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m' +
+              '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day' +
               '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=1&timezone=auto',
           );
           const c = w.current, d = w.daily;
           const lugar = [place.name, place.admin1, place.country].filter(Boolean).join(', ');
-          return (
+          const text =
             `Clima en ${lugar}: ${WMO[c.weather_code] ?? 'condición desconocida'}, ${Math.round(c.temperature_2m)} grados ` +
             `(sensación de ${Math.round(c.apparent_temperature)}), humedad ${c.relative_humidity_2m} por ciento, viento ${Math.round(c.wind_speed_10m)} km/h. ` +
             `Hoy: máxima ${Math.round(d.temperature_2m_max[0])}, mínima ${Math.round(d.temperature_2m_min[0])}, ` +
-            `probabilidad de lluvia ${d.precipitation_probability_max[0]} por ciento.`
-          );
+            `probabilidad de lluvia ${d.precipitation_probability_max[0]} por ciento.`;
+          return { text, scene: weatherScene(Number(c.weather_code), c.is_day !== 0) }; // el fondo lo decide el dato, no el modelo
         },
       },
       precio_dolar: {
@@ -85,12 +95,12 @@ export class ToolsService {
             if (!rows.length) rows = await getJson('https://www.datos.gov.co/resource/32sa-8pi3.json?$order=vigenciadesde%20DESC&$limit=1');
             const r = rows[0];
             if (!r) return 'No pude consultar la TRM en este momento.';
-            return `TRM oficial de Colombia vigente el ${hoy}: ${Number(r.valor).toFixed(2)} pesos por dólar.`;
+            return { text: `TRM oficial de Colombia vigente el ${hoy}: ${Number(r.valor).toFixed(2)} pesos por dólar.`, reaction: 'dinero' };
           }
           const fx = await getJson('https://open.er-api.com/v6/latest/USD');
           const rate = fx.rates?.[moneda];
           if (!rate) return `No tengo la tasa de cambio para la moneda ${moneda}.`;
-          return `Un dólar equivale a ${Number(rate).toFixed(rate > 100 ? 0 : 2)} ${moneda} (tasa de referencia de mercado, no oficial).`;
+          return { text: `Un dólar equivale a ${Number(rate).toFixed(rate > 100 ? 0 : 2)} ${moneda} (tasa de referencia de mercado, no oficial).`, reaction: 'dinero' };
         },
       },
       registrar_interesado: {
@@ -140,12 +150,13 @@ export class ToolsService {
     const priv = Object.entries(this.ownerTools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
     return [...pub, ...priv, ...(await this.plane.definitions())];
   }
-  async run(name: string, rawArgs: string, owner: boolean): Promise<string> {
-    if (name.startsWith(PLANE_PREFIX)) return owner ? this.plane.call(name, rawArgs) : 'Error: esa herramienta no existe.'; // doble control
+  async run(name: string, rawArgs: string, owner: boolean): Promise<ToolResult> {
+    if (name.startsWith(PLANE_PREFIX)) return { text: owner ? await this.plane.call(name, rawArgs) : 'Error: esa herramienta no existe.' }; // doble control
     const tool = this.tools[name] ?? (owner ? this.ownerTools[name] : undefined);
-    if (!tool) return `Error: la herramienta ${name} no existe.`;
+    if (!tool) return { text: `Error: la herramienta ${name} no existe.` };
     let args: Record<string, unknown> = {};
-    try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return 'Error: argumentos invalidos.'; }
-    try { return String(await tool.run(args)); } catch (e) { return `Error al consultar: ${(e as Error).message}. Dile a la persona que no pudiste consultarlo ahora.`; }
+    try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return { text: 'Error: argumentos invalidos.' }; }
+    try { const out = await tool.run(args); return typeof out === 'string' ? { text: out } : out; }
+    catch (e) { return { text: `Error al consultar: ${(e as Error).message}. Dile a la persona que no pudiste consultarlo ahora.` }; }
   }
 }
