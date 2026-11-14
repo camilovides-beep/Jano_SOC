@@ -70,8 +70,38 @@ export class LeadsService {
     return [cols.join(','), ...this.list(10_000).map((l) => cols.map((c) => esc(l[c])).join(','))].join('\n');
   }
 
-  /** Aviso opcional (por ejemplo a un flujo de n8n que escriba por WhatsApp o correo). */
+  /** Texto del aviso de un interesado. */
+  message(lead: Lead): string {
+    return [
+      '🔔 Nuevo interesado',
+      `👤 ${lead.name}${lead.company ? ` — ${lead.company}` : ''}`,
+      `📞 ${lead.contact}`,
+      `🧩 ${lead.interest.replaceAll('_', ' ')}`,
+      lead.detail ? `📝 ${lead.detail}` : '',
+      `#${lead.id} · ${new Intl.DateTimeFormat('es-CO', { timeZone: this.cfg.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(lead.created_at))}`,
+    ].filter(Boolean).join('\n');
+  }
+
+  /** Envia un mensaje por el bot de Telegram. Devuelve '' si salio bien o el motivo del fallo. */
+  async telegram(text: string): Promise<string> {
+    if (!this.cfg.telegramBotToken || !this.cfg.telegramChatId) return 'Telegram no está configurado';
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.cfg.telegramBotToken}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: this.cfg.telegramChatId, text }), signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) return '';
+      const d: any = await res.json().catch(() => ({}));
+      return `Telegram respondió ${res.status}: ${d.description ?? 'sin detalle'}`;
+    } catch (e) { return `no se pudo conectar con Telegram: ${(e as Error).name}`; } // sin el mensaje: podria traer la URL con el token
+  }
+
+  /** Avisos de un interesado nuevo: Telegram y, si esta configurado, un webhook (por ejemplo n8n). */
   private async notify(lead: Lead) {
+    if (this.cfg.telegramBotToken && this.cfg.telegramChatId) {
+      const err = await this.telegram(this.message(lead));
+      if (err) this.log.warn(`aviso de interesado #${lead.id}: ${err}`); else this.log.log(`interesado #${lead.id} avisado por Telegram`);
+    }
     if (!this.cfg.leadsWebhookUrl) return;
     try {
       const res = await fetch(this.cfg.leadsWebhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'nuevo_interesado', lead }), signal: AbortSignal.timeout(8000) });

@@ -28,6 +28,9 @@ export class ConfigService {
   readonly planeApiKey: string;
   /** URL opcional a la que se avisa cada interesado nuevo (por ejemplo un webhook de n8n). */
   readonly leadsWebhookUrl: string;
+  /** Bot de Telegram que avisa cada interesado nuevo. Ambos vacios = sin aviso. */
+  readonly telegramBotToken: string;
+  readonly telegramChatId: string;
   readonly maxSessions: number;
   readonly sessionMaxSeconds: number;
   readonly idleSeconds: number;
@@ -70,6 +73,8 @@ export class ConfigService {
     this.planeMcpUrl = str('PLANE_MCP_URL');
     this.planeApiKey = str('PLANE_API_KEY');
     this.leadsWebhookUrl = str('LEADS_WEBHOOK_URL');
+    this.telegramBotToken = str('TELEGRAM_BOT_TOKEN');
+    this.telegramChatId = str('TELEGRAM_CHAT_ID');
     const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
     this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';
     const file = str('SYSTEM_PROMPT_FILE', 'prompts/system.md');
