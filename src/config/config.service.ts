@@ -31,6 +31,13 @@ export class ConfigService {
   /** Bot de Telegram que avisa cada interesado nuevo. Ambos vacios = sin aviso. */
   readonly telegramBotToken: string;
   readonly telegramChatId: string;
+  /** Direccion del QR de contacto (por ejemplo un enlace de WhatsApp). Vacia = sin QR. */
+  readonly contactUrl: string;
+  readonly contactTitle: string;
+  readonly contactCaption: string;
+  readonly cardsFile: string;
+  /** Dias que se recuerda a un visitante (0 = sin memoria). */
+  readonly visitorMemoryDays: number;
   readonly maxSessions: number;
   readonly sessionMaxSeconds: number;
   readonly idleSeconds: number;
@@ -56,7 +63,7 @@ export class ConfigService {
     this.elevenModelId = str('ELEVENLABS_MODEL_ID', 'eleven_v4_turbo');
     this.deepgramApiKey = required('DEEPGRAM_API_KEY');
     this.deepgramModel = str('DEEPGRAM_MODEL', 'nova-3');
-    this.deepgramLanguage = str('DEEPGRAM_LANGUAGE', 'es');
+    this.deepgramLanguage = str('DEEPGRAM_LANGUAGE', 'multi');
     this.deepseekApiKey = required('DEEPSEEK_API_KEY');
     this.deepseekModel = str('DEEPSEEK_MODEL', 'deepseek-flash');
     this.timezone = str('TIMEZONE', 'America/Bogota');
@@ -75,6 +82,11 @@ export class ConfigService {
     this.leadsWebhookUrl = str('LEADS_WEBHOOK_URL');
     this.telegramBotToken = str('TELEGRAM_BOT_TOKEN');
     this.telegramChatId = str('TELEGRAM_CHAT_ID');
+    this.contactUrl = str('CONTACT_URL');
+    this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
+    this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Javier');
+    this.cardsFile = str('CARDS_FILE', 'content/tarjetas.json');
+    this.visitorMemoryDays = int('VISITOR_MEMORY_DAYS', 90, 0);
     const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
     this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';
     const file = str('SYSTEM_PROMPT_FILE', 'prompts/system.md');

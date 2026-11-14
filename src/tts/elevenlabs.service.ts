@@ -22,14 +22,14 @@ export class ElevenLabsService {
   private readonly log = new Logger(ElevenLabsService.name);
   constructor(private readonly cfg: ConfigService) {}
 
-  async *stream(text: string, signal?: AbortSignal): AsyncGenerator<TtsChunk> {
+  async *stream(text: string, signal?: AbortSignal, lang = 'es'): AsyncGenerator<TtsChunk> {
     const url =
       `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.cfg.elevenVoiceId)}` +
       `/stream/with-timestamps?output_format=pcm_${TTS_SAMPLE_RATE}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'xi-api-key': this.cfg.elevenApiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model_id: this.cfg.elevenModelId, language_code: 'es' }),
+      body: JSON.stringify({ text, model_id: this.cfg.elevenModelId, language_code: lang }),
       signal,
     });
     if (!res.ok || !res.body) {

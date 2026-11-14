@@ -1,0 +1,26 @@
+{
+  "chatbots": {
+    "titulo": "Chatbots con IA",
+    "puntos": ["Atienden a tus clientes a cualquier hora", "Responden con la información de tu negocio", "Pasan la conversación a una persona cuando hace falta"]
+  },
+  "voz": {
+    "titulo": "Agentes de voz",
+    "puntos": ["Conversan por voz, como este avatar", "Para atención, recepción o kioscos", "Integrados con tus sistemas"]
+  },
+  "whatsapp": {
+    "titulo": "Bots de pedidos y ventas por WhatsApp",
+    "puntos": ["Reciben pedidos y arman la orden", "Muestran catálogo y responden dudas", "Te avisan de cada venta"]
+  },
+  "automatizacion": {
+    "titulo": "Automatización con n8n",
+    "puntos": ["Conecta las herramientas que ya usas", "Elimina tareas repetitivas", "Reportes y avisos automáticos"]
+  },
+  "dashboards": {
+    "titulo": "Dashboards",
+    "puntos": ["Tus indicadores en una sola pantalla", "Datos actualizados automáticamente", "Para decidir con información"]
+  },
+  "despliegue": {
+    "titulo": "Despliegue de sistemas",
+    "puntos": ["Aplicaciones en servidores con Docker", "Dominio, HTTPS y respaldos", "Puesta en marcha y mantenimiento"]
+  }
+}

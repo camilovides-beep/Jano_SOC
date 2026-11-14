@@ -18,6 +18,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
 COPY prompts ./prompts
+COPY content ./content
 COPY package.json ./
 # Lista de dispositivos del dueño. Montar un volumen en /app/data para que sobreviva a los despliegues.
 RUN mkdir -p /app/data && chown node:node /app/data

@@ -4,7 +4,7 @@ import { ConfigService } from '../config/config.service';
 
 export interface SttHandlers {
   /** Texto reconocido. isFinal: el tramo ya no cambia. speechFinal: Deepgram detecto fin de frase. */
-  onTranscript(text: string, isFinal: boolean, speechFinal: boolean): void;
+  onTranscript(text: string, isFinal: boolean, speechFinal: boolean, lang?: string): void;
   /** Respaldo del fin de frase: no hubo palabras nuevas durante utterance_end_ms. */
   onUtteranceEnd(): void;
   onClose(reason: string): void;
@@ -35,7 +35,7 @@ export class DeepgramService {
     ws.on('open', () => { for (const b of pending.splice(0)) ws.send(b); });
     ws.on('message', (raw) => {
       let m: any; try { m = JSON.parse(raw.toString()); } catch { return; }
-      if (m.type === 'Results') h.onTranscript((m.channel?.alternatives?.[0]?.transcript ?? '').trim(), !!m.is_final, !!m.speech_final);
+      if (m.type === 'Results') h.onTranscript((m.channel?.alternatives?.[0]?.transcript ?? '').trim(), !!m.is_final, !!m.speech_final, m.channel?.alternatives?.[0]?.languages?.[0]); // languages solo llega con language=multi
       else if (m.type === 'UtteranceEnd') h.onUtteranceEnd();
       else if (m.type === 'Error') this.log.error(`Deepgram: ${m.description ?? m.message ?? 'error'}`);
     });

@@ -11,6 +11,8 @@ import { OwnerController } from './owner/owner.controller';
 import { OwnerService } from './owner/owner.service';
 import { PlaneMcpService } from './mcp/plane-mcp.service';
 import { LeadsService } from './leads/leads.service';
+import { CardsService } from './cards/cards.service';
+import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
 
 @Module({
@@ -21,6 +23,6 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
     }),
   ],
   controllers: [HealthController, OwnerController],
-  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, LeadsService, SessionGateway],
+  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

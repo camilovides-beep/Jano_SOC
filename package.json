@@ -19,6 +19,7 @@
     "@nestjs/platform-ws": "^12.5.0",
     "@nestjs/serve-static": "^12.1.1",
     "@nestjs/websockets": "^12.5.0",
+    "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "ws": "^8.23.0"
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.2",
     "three": "^0.187.0",
     "typescript": "^7.0.2"

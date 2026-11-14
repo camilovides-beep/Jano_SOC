@@ -15,6 +15,13 @@ export class DeepSeekService {
   private readonly log = new Logger(DeepSeekService.name);
   constructor(private readonly cfg: ConfigService) {}
 
+  /** Respuesta completa en texto (sin herramientas). */
+  async complete(messages: unknown[]): Promise<string> {
+    let out = '';
+    for await (const ev of this.chat(messages, [], AbortSignal.timeout(15_000))) if (ev.type === 'text') out += ev.delta;
+    return out;
+  }
+
   async *chat(messages: unknown[], tools: unknown[], signal?: AbortSignal): AsyncGenerator<LlmEvent> {
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',

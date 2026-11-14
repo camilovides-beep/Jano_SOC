@@ -46,3 +46,20 @@ button.ghost { background: rgba(255, 255, 255, .12); }
 .gate.standby h1, .gate.standby #btn-start, .gate.standby .gate-error:empty { display: none; }
 .gate.standby #gate-text { color: var(--fg); font-size: clamp(17px, 2.6vw, 22px); }
 @keyframes breathe { 50% { transform: translateY(-4px); opacity: .82; } }
+/* Tarjeta que el avatar muestra mientras habla (servicio o contacto con QR). */
+.card-panel { position: fixed; right: max(18px, 3vw); top: 50%; transform: translateY(-50%); width: min(300px, 30vw); padding: 18px; border-radius: 18px;
+  background: rgba(14, 18, 24, .86); backdrop-filter: blur(10px); box-shadow: 0 16px 50px rgba(0, 0, 0, .45); display: grid; gap: 10px; animation: card-in .35s ease-out; }
+.card-panel[hidden] { display: none; }
+.card-panel h2 { margin: 0; font-size: clamp(17px, 1.6vw, 21px); }
+.card-panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: #d5dbe3; font-size: 15px; }
+.card-panel ul:empty { display: none; }
+.card-panel img { width: 100%; max-width: 220px; justify-self: center; border-radius: 12px; background: #fff; padding: 8px; }
+.card-panel img[hidden] { display: none; }
+.card-panel p { margin: 0; text-align: center; color: var(--muted); font-size: 14px; }
+.card-panel p:empty { display: none; }
+@keyframes card-in { from { opacity: 0; transform: translateY(-50%) translateX(24px); } }
+@media (orientation: portrait), (max-width: 760px) { /* kiosco vertical y celular: la tarjeta va abajo, sobre los subtitulos */
+  .card-panel { right: 50%; top: auto; bottom: calc(150px + env(safe-area-inset-bottom)); transform: translateX(50%); width: min(420px, 90vw); grid-template-columns: 1fr auto; align-items: center; }
+  .card-panel h2, .card-panel ul { grid-column: 1; } .card-panel img { grid-column: 2; grid-row: 1 / span 3; max-width: 130px; } .card-panel p { grid-column: 1 / -1; }
+  @keyframes card-in { from { opacity: 0; transform: translateX(50%) translateY(24px); } }
+}

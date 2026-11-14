@@ -29,6 +29,28 @@ let state = 'idle', live = false, connecting = false, speechId = -1, subChars = 
 let armed = false, loud = 0, retryAt = 0;
 const prebuffer = [];
 
+// Identificador al azar de este navegador, para que el avatar reconozca a quien vuelve. En un kiosco compartido se
+// desactiva con ?kiosco=1 (todas las personas usarian el mismo navegador).
+const KIOSK = new URLSearchParams(location.search).get('kiosco') === '1';
+function visitorId() {
+  if (KIOSK) return undefined;
+  try {
+    let id = localStorage.getItem('minijavi_visitor');
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('minijavi_visitor', id); }
+    return id;
+  } catch { return undefined; }
+}
+let cardTimer = null;
+function showCard(card) {
+  $('card-title').textContent = card.title || '';
+  $('card-lines').replaceChildren(...(card.lines || []).map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
+  $('card-qr').hidden = !card.qr; if (card.qr) $('card-qr').src = card.qr;
+  $('card-caption').textContent = card.caption || '';
+  $('card').hidden = false;
+  clearTimeout(cardTimer); cardTimer = setTimeout(hideCard, card.qr ? 30000 : 14000); // el QR se queda mas tiempo para alcanzar a escanearlo
+}
+function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; }
+
 function setState(s) {
   if (s === state) return;
   state = s; avatar.setState(s);
@@ -52,7 +74,7 @@ function onMessage(msg) {
       if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
       break;
     case 'user_final':
-      $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; setState('thinking'); break;
+      $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; hideCard(); setState('thinking'); break;
     case 'speech_start':
       stopSpeech(); speechId = msg.id; subShown = 0; player.begin(msg.sampleRate); backdrop.show(null); break;
     case 'audio':
@@ -68,6 +90,8 @@ function onMessage(msg) {
       avatar.react(msg.name); emojiBurst($('fx'), msg.name); break;
     case 'scene':
       backdrop.show(msg.name); break;
+    case 'card':
+      showCard(msg); break;
     case 'interrupt': // el usuario hablo encima: se corta el audio y la boca vuelve a reposo
       stopSpeech(); $('sub-avatar').textContent = ''; backdrop.show(null); setState('listening'); break;
   }
@@ -77,7 +101,7 @@ function onMessage(msg) {
 function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
-  stopSpeech(); backdrop.show(null); setState('idle');
+  stopSpeech(); backdrop.show(null); hideCard(); setState('idle');
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
   $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -90,7 +114,7 @@ function startSession() {
   if (live || connecting) return;
   connecting = true; closeReason = '';
   socket?.close();
-  socket = connect($('code').value, { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) });
+  socket = connect($('code').value, visitorId(), { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) });
 }
 
 function onMicChunk(buffer) {
@@ -144,7 +168,7 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n),
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard,
   standby: () => { armed = true; shutdown(''); },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

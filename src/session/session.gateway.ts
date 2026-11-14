@@ -5,7 +5,9 @@ import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import { OwnerService } from '../owner/owner.service';
 import { ConfigService } from '../config/config.service';
-import { DeepSeekService } from '../llm/deepseek.service';
+import { CardsService } from '../cards/cards.service';
+import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
+import { MemoryService } from '../memory/memory.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { ToolsService } from '../tools/tools.service';
 import { ElevenLabsService, TTS_SAMPLE_RATE, TtsChunk } from '../tts/elevenlabs.service';
@@ -19,9 +21,13 @@ interface Turn {
   samples: number;       // muestras de audio ya enviadas en este turno (para encadenar los tiempos de cada frase)
   chain: Promise<void>;  // emision en orden de las frases
   spoken: string;
+  ttsActive: number; ttsWaiters: (() => void)[]; // control de peticiones de voz simultaneas
+  lang: string;          // idioma de la respuesta (el de la ultima frase del usuario)
   sceneLocked?: boolean; // una herramienta ya puso el fondo de este turno (el del clima manda sobre el del modelo)
   tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
 }
+/** Respuesta del modelo pedida por adelantado, antes de confirmar el fin de frase (baja la latencia). */
+interface Spec { text: string; lang: string; ctrl: AbortController; events: LlmEvent[]; done: boolean; err?: Error; wake?: () => void; tFirst?: number; }
 interface Session {
   n: number;
   ready: boolean;
@@ -33,6 +39,12 @@ interface Session {
   turnId: number;
   clientPlaying: boolean; // el navegador sigue reproduciendo la respuesta
   lastActivity: number;
+  visitor?: string;      // identificador del navegador, para recordar a quien vuelve
+  userTurns: number;
+  langs: string[];       // idiomas detectados en la frase en curso
+  lastLang: string;      // idioma del ultimo texto reconocido (tambien en resultados parciales)
+  spec?: Spec;
+  specTimer?: NodeJS.Timeout;
   leads: number;         // interesados guardados en esta sesion (tope contra abuso)
   timers: NodeJS.Timeout[];
 }
@@ -62,8 +74,14 @@ const FILLERS: Record<string, string> = {
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
 const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);   // los que puede pedir el modelo; los del clima los pone la herramienta
-const TAG_HEAD = /^\s*\[(r|f):([a-zñ_]+)\]\s*/i;
-const TAG_ANY = /\[(r|f):[^\]]*\]/gi;
+const TAG_HEAD = /^\s*\[(r|f|c):([a-zñ_]+)\]\s*/i;
+const TAG_ANY = /\[(r|f|c):[^\]]*\]/gi;
+const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9ñ]+/g, '');
+const LANG_NAMES: Record<string, string> = { en: 'inglés', pt: 'portugués', fr: 'francés', it: 'italiano', de: 'alemán' };
+/** Mensaje del usuario tal como lo ve el modelo: si hablo en otro idioma, se le recuerda responder en ese idioma. */
+const userMsg = (text: string, lang: string) => (LANG_NAMES[lang] ? `${text}\n\n(Nota del sistema: la persona habló en ${LANG_NAMES[lang]}. Responde en ${LANG_NAMES[lang]}.)` : text);
+/** Mientras consulta una herramienta, en otros idiomas. */
+const FILLER_OTHER: Record<string, string> = { en: 'One moment.', pt: 'Um momento.', fr: 'Un instant.', it: 'Un momento.', de: 'Einen Moment.' };
 /** Se agrega al system prompt: el protocolo de etiquetas depende del codigo, no de la personalidad. */
 const TAG_RULES = `
 
@@ -80,6 +98,7 @@ Además, según el tema de TU respuesta, puedes agregar después UNA etiqueta de
 [f:matrix] si hablas de programación, software, tecnología o inteligencia artificial.
 [f:estrellas] si hablas del espacio, la ciencia, el futuro o los sueños.
 [f:atardecer] si hablas de Sucre, la costa, Colombia, viajes, familia o temas personales y tranquilos.
+Idioma: responde siempre en el idioma en que la persona te habló en su último mensaje (español si no está claro). Las etiquetas van siempre igual, en español.
 Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo: "[r:alegria] ¡Gracias, qué amable!"`;
 
 /**
@@ -88,6 +107,7 @@ Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo:
  *  servidor -> { type: 'ready' } | { type: 'error', reason }
  *              { type: 'user_partial', text } | { type: 'user_final', text }
  *              { type: 'speech_start', id, sampleRate } , { type: 'audio', id, audio, align? } ... , { type: 'speech_end', id }
+ *              { type: 'card', title, lines, qr?, caption? }  (tarjeta en pantalla)
  *              { type: 'reaction', name } | { type: 'scene', name }  (gesto y emojis / fondo, segun lo que pidio el modelo)
  *              { type: 'interrupt' }  (el usuario hablo encima: cortar el audio)
  */
@@ -99,13 +119,13 @@ export class SessionGateway implements OnGatewayConnection {
   constructor(
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
-    private readonly ownerAuth: OwnerService,
+    private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
   ) {}
 
   handleConnection(client: WebSocket, req: IncomingMessage) {
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, timers: [] };
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [] };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
       if (isBinary) { if (s.ready) s.stt?.send(raw as Buffer); return; }
@@ -114,6 +134,7 @@ export class SessionGateway implements OnGatewayConnection {
         if (msg?.type !== 'hello') return;
         if (!s.owner && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
+        if (!s.owner && this.memory.valid(msg.visitor)) s.visitor = msg.visitor;
         clearTimeout(authTimer); this.start(client, s);
         return;
       }
@@ -126,9 +147,18 @@ export class SessionGateway implements OnGatewayConnection {
   private start(client: WebSocket, s: Session) {
     s.ready = true; this.active++;
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES });
+    const known = s.visitor ? this.memory.get(s.visitor) : null;
+    const cardIds = this.cards.ids();
+    const cardRules = cardIds.length
+      ? `\nTarjetas en pantalla: si tu respuesta trata de uno de estos temas, agrega UNA etiqueta [c:tema] para mostrar su tarjeta: ${cardIds.filter((c) => c !== 'contacto').join(', ')}.` +
+        (cardIds.includes('contacto') ? ' Si la persona quiere contactar a Javier, seguir por WhatsApp o prefiere no dictar sus datos, agrega [c:contacto] para mostrarle un código QR y dile que lo escanee.' : '')
+      : '';
+    const memoryNote = known
+      ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
+      : '';
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES + cardRules + memoryNote });
     s.stt = this.stt.open({
-      onTranscript: (text, isFinal, speechFinal) => this.onTranscript(client, s, text, isFinal, speechFinal),
+      onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
       onClose: (reason) => { if (s.ready) { this.log.warn(`sesion #${s.n}: Deepgram se cerro (${reason})`); this.send(client, { type: 'error', reason: 'escucha' }); client.close(1011, 'stt'); } },
     });
@@ -138,7 +168,7 @@ export class SessionGateway implements OnGatewayConnection {
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
     this.send(client, { type: 'ready', owner: s.owner });
-    const greeting = s.owner ? 'Hola Javier, aquí estoy. ¿Qué revisamos?' : this.cfg.greeting;
+    const greeting = s.owner ? 'Hola Javier, aquí estoy. ¿Qué revisamos?' : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
@@ -150,33 +180,42 @@ export class SessionGateway implements OnGatewayConnection {
   private end(s: Session) {
     if (!s.ready) return;
     s.ready = false; this.active--;
-    s.turn?.ctrl.abort(); s.stt?.close();
+    s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
+    if (s.visitor && s.userTurns > 0) void this.remember(s);
     for (const t of s.timers) { clearTimeout(t); clearInterval(t); }
     this.log.log(`sesion #${s.n} cerrada (${this.active}/${this.cfg.maxSessions})`);
   }
 
   // ---------- escucha ----------
-  private onTranscript(client: WebSocket, s: Session, text: string, isFinal: boolean, speechFinal: boolean) {
+  private onTranscript(client: WebSocket, s: Session, text: string, isFinal: boolean, speechFinal: boolean, lang?: string) {
     if (text) {
       s.lastActivity = Date.now();
-      if (isFinal) s.finals.push(text);
+      if (lang) s.lastLang = lang;
+      if (isFinal) { s.finals.push(text); if (lang) s.langs.push(lang); }
       const current = [...s.finals, isFinal ? '' : text].join(' ').trim();
       const busy = !!s.turn || s.clientPlaying;
       if (busy) {
         // El avatar esta respondiendo. Solo se interrumpe si se reconocen varias palabras (evita cortes por eco o ruido).
         if (words(current) >= this.cfg.bargeInWords) this.interrupt(client, s);
       }
-      if (!(s.turn || s.clientPlaying)) this.send(client, { type: 'user_partial', text: current });
+      if (!(s.turn || s.clientPlaying)) {
+        this.send(client, { type: 'user_partial', text: current });
+        // Arranque anticipado: si pasan 150 ms sin texto nuevo, se le pide la respuesta al modelo con lo que hay.
+        // Si al confirmarse el fin de frase el texto es el mismo, esa respuesta ya va adelantada; si no, se descarta.
+        clearTimeout(s.specTimer);
+        if (!speechFinal && words(current) >= 2) s.specTimer = setTimeout(() => this.speculate(s, current), 150);
+      }
     }
     if (speechFinal) this.commit(client, s);
   }
 
   private commit(client: WebSocket, s: Session) {
     const text = s.finals.join(' ').trim();
-    s.finals = [];
+    const lang = s.langs.sort((a, b) => s.langs.filter((v) => v === b).length - s.langs.filter((v) => v === a).length)[0] ?? 'es';
+    s.finals = []; s.langs = []; clearTimeout(s.specTimer);
     if (!text) return;
     if (s.turn || s.clientPlaying) return; // palabras sueltas mientras el avatar habla: se descartan
-    void this.respond(client, s, text);
+    void this.respond(client, s, text, lang);
   }
 
   private interrupt(client: WebSocket, s: Session) {
@@ -188,23 +227,55 @@ export class SessionGateway implements OnGatewayConnection {
   // ---------- respuesta ----------
   private newTurn(s: Session): Turn {
     s.turn?.ctrl.abort();
-    const turn: Turn = { id: ++s.turnId, ctrl: new AbortController(), t0: Date.now(), samples: 0, chain: Promise.resolve(), spoken: '', tags: '' };
+    const turn: Turn = { id: ++s.turnId, ctrl: new AbortController(), t0: Date.now(), samples: 0, chain: Promise.resolve(), spoken: '', tags: '', lang: 'es', ttsActive: 0, ttsWaiters: [] };
     s.turn = turn; s.clientPlaying = true;
     return turn;
   }
 
-  private async respond(client: WebSocket, s: Session, userText: string) {
+  /** Pide por adelantado la respuesta a `text` (primera ronda del modelo) y la va guardando. */
+  private speculate(s: Session, text: string) {
+    if (!s.ready || s.turn || s.clientPlaying) return;
+    const lang = s.lastLang;
+    if (s.spec && norm(s.spec.text) === norm(text) && s.spec.lang === lang) return;
+    s.spec?.ctrl.abort();
+    const spec: Spec = { text, lang, ctrl: new AbortController(), events: [], done: false };
+    s.spec = spec;
+    (async () => {
+      const tools = await this.tools.definitions(s.owner);
+      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) }], tools, spec.ctrl.signal)) {
+        if (ev.type === 'text') spec.tFirst ??= Date.now();
+        spec.events.push(ev); spec.wake?.();
+      }
+    })().catch((e) => { spec.err = e as Error; }).finally(() => { spec.done = true; spec.wake?.(); });
+  }
+  private async *drain(spec: Spec): AsyncGenerator<LlmEvent> {
+    for (let i = 0; ; ) {
+      while (i < spec.events.length) yield spec.events[i++];
+      if (spec.done) { if (spec.err) throw spec.err; return; }
+      await new Promise<void>((r) => (spec.wake = r));
+    }
+  }
+
+  private async respond(client: WebSocket, s: Session, userText: string, lang = 'es') {
     const turn = this.newTurn(s);
+    turn.lang = lang; s.userTurns++;
+    // Respuesta adelantada: sirve solo si se pidio con el mismo texto que quedo como definitivo.
+    const spec = s.spec && norm(s.spec.text) === norm(userText) && s.spec.lang === lang && !s.spec.err ? s.spec : undefined;
+    if (!spec) s.spec?.ctrl.abort();
+    s.spec = undefined;
+    if (spec) turn.ctrl.signal.addEventListener('abort', () => spec.ctrl.abort());
+    let hit = !!spec;
     this.send(client, { type: 'user_final', text: userText });
     this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
-    s.history.push({ role: 'user', content: userText });
+    s.history.push({ role: 'user', content: userMsg(userText, lang) });
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
     try {
       let buffer = '';
       for (let round = 0; round < (s.owner ? 6 : 4); round++) {
         let toolCalls: { id: string; name: string; arguments: string }[] = [];
         let text = '';
-        for await (const ev of this.llm.chat(s.history, await this.tools.definitions(s.owner), turn.ctrl.signal)) {
+        const source = round === 0 && spec ? this.drain(spec) : this.llm.chat(s.history, await this.tools.definitions(s.owner), turn.ctrl.signal);
+        for await (const ev of source) {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
           turn.tLlm ??= Date.now();
           text += ev.delta; buffer += ev.delta;
@@ -218,7 +289,7 @@ export class SessionGateway implements OnGatewayConnection {
         if (!toolCalls.length) break;
         s.history.push({ role: 'assistant', content: text || null, tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) });
         // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
-        if (!turn.spoken) this.say(client, s, turn, FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
+        if (!turn.spoken) this.say(client, s, turn, turn.lang !== 'es' ? (FILLER_OTHER[turn.lang] ?? 'One moment.') : FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
         for (const c of toolCalls) {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
@@ -241,7 +312,7 @@ export class SessionGateway implements OnGatewayConnection {
         this.say(client, s, turn, 'Perdón, tuve un problema para responder. ¿Me lo repites?');
       }
     }
-    await this.finish(client, s, turn, 'turno');
+    await this.finish(client, s, turn, hit ? 'turno (adelantado)' : 'turno');
   }
 
   /** Saca las etiquetas [r:...] y [f:...] del inicio del texto y avisa al navegador. */
@@ -252,6 +323,7 @@ export class SessionGateway implements OnGatewayConnection {
       turn.tags += `[${kind}:${name}]`;
       if (kind === 'r' && REACTIONS.has(name)) this.send(client, { type: 'reaction', name });
       if (kind === 'f' && SCENES.has(name) && !turn.sceneLocked) this.send(client, { type: 'scene', name });
+      if (kind === 'c') { const card = this.cards.get(name); if (card) this.send(client, { type: 'card', ...card }); }
       buffer = buffer.slice(m[0].length);
     }
     return buffer;
@@ -274,7 +346,18 @@ export class SessionGateway implements OnGatewayConnection {
     const buf: TtsChunk[] = [];
     let spaced = first; // entre frases se agrega un espacio para los subtitulos
     let done = false, wake: (() => void) | undefined;
-    (async () => { for await (const c of this.tts.stream(text, turn.ctrl.signal)) { buf.push(c); wake?.(); } })()
+    // ElevenLabs limita las peticiones simultaneas por cuenta: como mucho 2 frases de este turno a la vez, y un reintento
+    // si aun asi responde que hay demasiadas.
+    (async () => {
+      while (turn.ttsActive >= 2) await new Promise<void>((r) => turn.ttsWaiters.push(r));
+      turn.ttsActive++;
+      try {
+        for (let attempt = 0; ; attempt++) {
+          try { for await (const c of this.tts.stream(text, turn.ctrl.signal, turn.lang)) { buf.push(c); wake?.(); } break; }
+          catch (e) { if (attempt >= 2 || buf.length || !/429/.test((e as Error).message) || turn.ctrl.signal.aborted) throw e; await new Promise((r) => setTimeout(r, 400 * (attempt + 1))); }
+        }
+      } finally { turn.ttsActive--; turn.ttsWaiters.shift()?.(); }
+    })()
       .catch((e) => { if (!turn.ctrl.signal.aborted) this.log.error(`sesion #${s.n}: voz fallo: ${(e as Error).message}`); })
       .finally(() => { done = true; wake?.(); });
     turn.chain = turn.chain.then(async () => {
@@ -303,6 +386,20 @@ export class SessionGateway implements OnGatewayConnection {
     if (s.turn === turn) s.turn = undefined;
     const ms = (t?: number) => (t ? `${t - turn.t0} ms` : 'n/d');
     this.log.log(`sesion #${s.n} ${kind} #${turn.id}${aborted ? ' (interrumpido)' : ''}: primer token LLM ${ms(turn.tLlm)}, primer audio ${ms(turn.tAudio)}, audio ${(turn.samples / TTS_SAMPLE_RATE).toFixed(1)} s`);
+  }
+
+  /** Al cerrar la conversacion: guarda el nombre y un resumen corto para reconocer a la persona si vuelve. */
+  private async remember(s: Session) {
+    try {
+      const talk = s.history.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .map((m) => `${m.role === 'user' ? 'Persona' : 'Avatar'}: ${String(m.content).replace(TAG_ANY, '').trim()}`).join('\n').slice(-6000);
+      const out = await this.llm.complete([
+        { role: 'system', content: 'Devuelve SOLO un JSON con dos campos: "nombre" (el nombre que dijo la persona, o "" si no lo dijo) y "resumen" (una o dos frases en español sobre qué quería y en qué quedaron). Sin datos de contacto.' },
+        { role: 'user', content: talk },
+      ]);
+      const d = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
+      this.memory.save(s.visitor!, String(d.nombre ?? '').trim(), String(d.resumen ?? '').trim());
+    } catch (e) { this.log.warn(`sesion #${s.n}: no se pudo guardar la memoria (${(e as Error).message})`); }
   }
 
   private codeOk(code: string): boolean {
