@@ -1,0 +1,32 @@
+{
+  "name": "kiosco-avatar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Avatar 3D parlante: NestJS + Three.js + Deepgram + DeepSeek + ElevenLabs",
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/copy-vendor.mjs",
+    "start": "node dist/main.js",
+    "dev": "npm run build && node dist/main.js"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.5.0",
+    "@nestjs/core": "^12.5.0",
+    "@nestjs/platform-express": "^12.5.0",
+    "@nestjs/platform-ws": "^12.5.0",
+    "@nestjs/serve-static": "^12.1.1",
+    "@nestjs/websockets": "^12.5.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "three": "^0.187.0",
+    "typescript": "^7.0.2"
+  }
+}

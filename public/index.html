@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#101418">
+  <title>Avatar de Javier</title>
+  <link rel="stylesheet" href="./css/style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <canvas id="stage" aria-label="Avatar"></canvas>
+
+  <header class="hud">
+    <div id="status" class="status" data-state="idle"><span class="dot"></span><span id="status-text">En reposo</span></div>
+    <div id="mic" class="mic" hidden><span class="mic-dot"></span>Micrófono activo</div>
+  </header>
+
+  <section id="subtitles" class="subtitles" aria-live="polite">
+    <p id="sub-user" class="sub-user"></p>
+    <p id="sub-avatar" class="sub-avatar"></p>
+  </section>
+
+  <div id="gate" class="gate">
+    <form id="gate-form" class="gate-card">
+      <h1>Avatar de Javier</h1>
+      <p id="gate-text">Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.</p>
+      <input id="code" type="password" inputmode="text" autocomplete="off" placeholder="Código de acceso" hidden>
+      <button id="btn-start" type="submit">Hablar con Javier</button>
+      <p id="gate-error" class="gate-error" role="alert"></p>
+    </form>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
