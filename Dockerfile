@@ -11,7 +11,8 @@ RUN npm run build && npm prune --omit=dev
 
 # --- ejecucion ---
 FROM node:22-alpine
-ENV NODE_ENV=production PORT=3000
+# SQLite integrado de Node (base de interesados) aun avisa que es experimental en Node 22: se silencia ese aviso.
+ENV NODE_ENV=production PORT=3000 NODE_OPTIONS=--disable-warning=ExperimentalWarning
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

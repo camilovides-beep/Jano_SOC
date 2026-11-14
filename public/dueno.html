@@ -8,7 +8,12 @@
   <link rel="stylesheet" href="./css/style.css">
   <style>
     html, body { overflow: auto; }
-    main { max-width: 520px; margin: 0 auto; padding: 28px 18px 60px; display: grid; gap: 18px; }
+    .lead { display: grid; gap: 8px; align-items: start; }
+    .lead .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .lead select, .lead textarea { font: inherit; padding: 8px; border-radius: 10px; border: 1px solid #2b3440; background: #171c23; color: var(--fg); }
+    .lead textarea { width: 100%; min-height: 44px; resize: vertical; }
+    .tag { background: rgba(79, 140, 255, .25); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
+    main { max-width: 620px; margin: 0 auto; padding: 28px 18px 60px; display: grid; gap: 18px; }
     .card { background: #171c23; border-radius: 16px; padding: 22px; display: grid; gap: 12px; }
     .card h1, .card h2 { margin: 0; font-size: 20px; }
     .card p { margin: 0; color: var(--muted); }
@@ -41,6 +46,11 @@
       <p id="me" class="ok"></p>
       <ul id="list"></ul>
       <p><a href="./">Ir al avatar</a></p>
+    </section>
+    <section class="card" id="leads" hidden>
+      <h2>Interesados <small id="lead-count"></small></h2>
+      <p>Personas que le dejaron sus datos al avatar. <a href="./owner/leads.csv">Descargar CSV</a></p>
+      <ul id="lead-list"></ul>
     </section>
   </main>
   <script type="module" src="./js/dueno.js"></script>

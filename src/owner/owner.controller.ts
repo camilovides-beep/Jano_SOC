@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, HttpException, Param, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { LeadsService, STATUSES } from '../leads/leads.service';
 import { OWNER_COOKIE, OwnerService } from './owner.service';
 
 // Detras del proxy, la ultima direccion de X-Forwarded-For la puso el proxy (las anteriores las puede inventar el cliente).
@@ -9,7 +10,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService) {}
 
   private cookie(req: Request, value: string, maxAge: number) {
     return `${OWNER_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
@@ -51,4 +52,24 @@ export class OwnerController {
     if (ok && id === me.id) res.setHeader('Set-Cookie', this.cookie(req, '', 0));
     return { ok };
   }
+
+  // ---- interesados (solo desde un dispositivo registrado) ----
+  @Get('leads')
+  listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: this.leads.list() }; }
+
+  @Get('leads.csv')
+  csv(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    this.require(req);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="interesados.csv"');
+    return '\ufeff' + this.leads.csv();
+  }
+
+  @Patch('leads/:id')
+  updateLead(@Req() req: Request, @Param('id') id: string, @Body() body: { status?: string; notes?: string }) {
+    this.require(req); return { ok: this.leads.update(Number(id), body ?? {}) };
+  }
+
+  @Delete('leads/:id')
+  removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: this.leads.remove(Number(id)) }; }
 }

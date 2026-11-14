@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
+import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 
 interface Tool {
@@ -30,7 +31,9 @@ async function getJson(url: string): Promise<any> {
 @Injectable()
 export class ToolsService {
   private readonly tools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService) {
+  /** Herramientas locales que solo existen en sesiones del dueño. */
+  private readonly ownerTools: Record<string, Tool>;
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -90,6 +93,41 @@ export class ToolsService {
           return `Un dólar equivale a ${Number(rate).toFixed(rate > 100 ? 0 : 2)} ${moneda} (tasa de referencia de mercado, no oficial).`;
         },
       },
+      registrar_interesado: {
+        description:
+          'Guarda los datos de una persona interesada en los servicios de Javier para que él la contacte. Úsala SOLO después de ' +
+          'tener su nombre, un dato de contacto que ya le repetiste y confirmó, y su autorización para guardar los datos.',
+        parameters: {
+          type: 'object',
+          properties: {
+            nombre: { type: 'string', description: 'Nombre de la persona.' },
+            contacto: { type: 'string', description: 'Teléfono, WhatsApp o correo, tal como lo confirmó. Escríbelo en formato normal (dígitos o correo), no en palabras.' },
+            empresa: { type: 'string', description: 'Empresa o negocio, si lo mencionó.' },
+            interes: { type: 'string', enum: [...INTERESTS], description: 'Servicio de Javier que más se parece a lo que necesita.' },
+            detalle: { type: 'string', description: 'Resumen breve de lo que necesita, en una o dos frases.' },
+            autoriza: { type: 'boolean', description: 'true solo si la persona dijo que sí autoriza guardar sus datos para ser contactada.' },
+          },
+          required: ['nombre', 'contacto', 'interes', 'autoriza'],
+        },
+        run: (args) => {
+          if (args.autoriza !== true) return 'No se guardó: falta la autorización de la persona. Pregúntale si autoriza guardar sus datos.';
+          const nombre = String(args.nombre ?? '').trim(), contacto = String(args.contacto ?? '').trim();
+          if (nombre.length < 2 || contacto.length < 5) return 'No se guardó: falta el nombre o el dato de contacto. Pídeselo.';
+          const lead = this.leads.add({ name: nombre, contact: contacto, company: String(args.empresa ?? ''), interest: String(args.interes ?? 'otro'), detail: String(args.detalle ?? '') });
+          return `Guardado con el número ${lead.id}. Dile que Javier lo contactará pronto y agradécele.`;
+        },
+      },
+    };
+    this.ownerTools = {
+      ver_interesados: {
+        description: 'Lista las personas interesadas en los servicios de Javier que el avatar ha registrado, de la más reciente a la más antigua.',
+        parameters: { type: 'object', properties: { cuantos: { type: 'number', description: 'Cuántos traer (por defecto 10).' } }, required: [] },
+        run: (args) => {
+          const rows = this.leads.list(Math.min(30, Math.max(1, Number(args.cuantos) || 10)));
+          if (!rows.length) return 'Todavía no hay interesados registrados.';
+          return rows.map((l) => `#${l.id} ${l.created_at.slice(0, 10)} | ${l.name}${l.company ? ' (' + l.company + ')' : ''} | ${l.contact} | ${l.interest} | ${l.status} | ${l.detail}`).join('\n');
+        },
+      },
     };
   }
   /**
@@ -98,11 +136,13 @@ export class ToolsService {
    */
   async definitions(owner: boolean): Promise<unknown[]> {
     const pub = Object.entries(this.tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
-    return owner ? [...pub, ...(await this.plane.definitions())] : pub;
+    if (!owner) return pub;
+    const priv = Object.entries(this.ownerTools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
+    return [...pub, ...priv, ...(await this.plane.definitions())];
   }
   async run(name: string, rawArgs: string, owner: boolean): Promise<string> {
     if (name.startsWith(PLANE_PREFIX)) return owner ? this.plane.call(name, rawArgs) : 'Error: esa herramienta no existe.'; // doble control
-    const tool = this.tools[name];
+    const tool = this.tools[name] ?? (owner ? this.ownerTools[name] : undefined);
     if (!tool) return `Error: la herramienta ${name} no existe.`;
     let args: Record<string, unknown> = {};
     try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return 'Error: argumentos invalidos.'; }

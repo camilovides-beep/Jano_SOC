@@ -32,16 +32,30 @@ interface Session {
   turnId: number;
   clientPlaying: boolean; // el navegador sigue reproduciendo la respuesta
   lastActivity: number;
+  leads: number;         // interesados guardados en esta sesion (tope contra abuso)
   timers: NodeJS.Timeout[];
 }
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
+
+/** Como captar interesados. Va en sesiones publicas: el avatar existe para conseguirle clientes a Javier. */
+const LEAD_RULES = `
+
+Captación de clientes: si la persona muestra interés en algo que Javier hace (chatbots, agentes de voz, bots de WhatsApp, automatización, dashboards, despliegue de sistemas, desarrollo de software) o pregunta cómo contratarlo:
+1. Cuéntale en una o dos frases cómo Javier puede ayudarle y pregúntale qué necesita.
+2. Pídele su nombre y un dato de contacto (WhatsApp, teléfono o correo), de a uno por vez, sin sonar a formulario.
+3. Repítele el contacto para confirmar que lo entendiste bien; si es un número, dilo dígito por dígito.
+4. Pregúntale si autoriza guardar esos datos para que Javier lo contacte.
+5. Solo si dijo que sí, usa la herramienta registrar_interesado. Después dile que Javier le escribirá pronto.
+No insistas si no quiere dejar sus datos, y no prometas precios, plazos ni resultados.`;
 
 /** Frase que se dice mientras una herramienta consulta su dato (evita el silencio de la espera). */
 const FILLERS: Record<string, string> = {
   plane_: 'Déjame revisar en Plane.',
   clima: 'Déjame mirar cómo está el clima.',
   precio_dolar: 'Ya te digo a cómo está.',
+  registrar_interesado: 'Listo, ya lo anoto.',
+  ver_interesados: 'Déjame mirar la lista.',
 };
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
@@ -90,7 +104,7 @@ export class SessionGateway implements OnGatewayConnection {
   handleConnection(client: WebSocket, req: IncomingMessage) {
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), timers: [] };
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, timers: [] };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
       if (isBinary) { if (s.ready) s.stt?.send(raw as Buffer); return; }
@@ -111,7 +125,7 @@ export class SessionGateway implements OnGatewayConnection {
   private start(client: WebSocket, s: Session) {
     s.ready = true; this.active++;
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : '') + TAG_RULES });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal) => this.onTranscript(client, s, text, isFinal, speechFinal),
       onUtteranceEnd: () => this.commit(client, s),
@@ -205,7 +219,9 @@ export class SessionGateway implements OnGatewayConnection {
         // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
         if (!turn.spoken) this.say(client, s, turn, FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
         for (const c of toolCalls) {
-          const result = await this.tools.run(c.name, c.arguments, s.owner);
+          let result: string;
+          if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
+          else { result = await this.tools.run(c.name, c.arguments, s.owner); if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++; }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });
         }
