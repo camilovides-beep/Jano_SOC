@@ -12,7 +12,7 @@ export function emojiBurst(layer, name) {
   const count = 14;
   for (let i = 0; i < count; i++) {
     const el = document.createElement('span');
-    el.className = 'emoji'; el.textContent = set[i % set.length];
+    el.className = 'emoji'; el.textContent = set[(Math.random() * set.length) | 0]; // al azar: mezcla los emojis en ambos lados
     const side = i % 2 ? 1 : -1; // a los lados de la cabeza, no encima de la cara
     el.style.left = `${50 + side * (16 + Math.random() * 24)}%`;
     el.style.top = `${30 + Math.random() * 40}%`;

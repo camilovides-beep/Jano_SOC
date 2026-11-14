@@ -99,13 +99,14 @@ export async function createAvatar(canvas) {
     const env = expr.name ? Math.min(1, expr.t / 0.18) * Math.min(1, (expr.dur - expr.t) / 0.6) : 0;
     exprK += (env - exprK) * (1 - Math.exp(-dt / 0.07));
     const e = expr.name, k = exprK;
-    let exBrow = 0, exSmile = 0, exBlink = 0, back = 0, lift = 0; exprMouth.viseme_O = 0;
+    let exBrow = 0, exSmile = 0, exBlink = 0, exSad = 0, exFrown = 0, back = 0, lift = 0; exprMouth.viseme_O = 0;
     if (e === 'sorpresa') { exBrow = 1; exprMouth.viseme_O = 0.55 * k; back = 0.16; goal.x += -0.07 * k; }
     else if (e === 'alegria') { exSmile = 1; exBrow = 0.35; goal.z += 0.07 * k; lift = Math.abs(Math.sin(expr.t * 7)) * 0.035; }
     else if (e === 'risa') { exSmile = 1; exBlink = 0.4; goal.x += Math.sin(expr.t * 16) * 0.05 * k; lift = Math.abs(Math.sin(expr.t * 16)) * 0.02; }
-    else if (e === 'pena') { exBlink = 0.3; goal.x += 0.13 * k; goal.z += -0.05 * k; }
-    else if (e === 'pensativo') { exBrow = 0.45; goal.z += 0.08 * k; goal.y += 0.1 * k; gazeGoal.x = -0.2; gazeGoal.y = 0.22; }
+    else if (e === 'pena') { exSad = 1; exBlink = 0.22; goal.x += 0.11 * k; goal.z += -0.05 * k; }
+    else if (e === 'pensativo') { exFrown = 0.35; exBrow = 0.3; goal.z += 0.08 * k; goal.y += 0.1 * k; gazeGoal.x = -0.2; gazeGoal.y = 0.22; }
     pivot.position.set(0, lift * k, -back * k);
+    setMorph('mouthSad', exSad * k); setMorph('browSad', exSad * k); setMorph('browDown', exFrown * k); // expresiones agregadas al modelo
     const kh = 1 - Math.exp(-dt / 0.14);
     head.x += (goal.x - head.x) * kh; head.y += (goal.y - head.y) * kh; head.z += (goal.z - head.z) * kh;
     pivot.rotation.set(head.x, head.y, head.z);
@@ -118,7 +119,7 @@ export async function createAvatar(canvas) {
     brow += (browGoal - brow) * (1 - Math.exp(-dt / 0.08)); setMorph('browUp', Math.max(brow, exBrow * k));
     setMorph('eyeBlink', Math.min(1, Math.max(blink * 1.05, exBlink * k)));
     const smileGoal = listening ? 0.25 : (state === 'idle' ? 0.15 : 0);
-    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile, exSmile * k));
+    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile * (1 - exSad * k), exSmile * k));
 
     renderer.render(scene, camera);
   }
