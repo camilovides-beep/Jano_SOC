@@ -21,6 +21,11 @@ export class CallMedia {
   private seq = Math.floor(Math.random() * 65535); private ts = Math.floor(Math.random() * 2 ** 31); private ssrc = Math.floor(Math.random() * 2 ** 31);
   private sender?: NodeJS.Timeout;
   readonly stats: CallStats = { packets: 0, seconds: 0, voiceSeconds: 0, peak: 0, ice: 'new' };
+  /** Audio recibido de la persona, ya convertido a PCM 16 bits mono 16 kHz (lo que espera el reconocimiento de voz). */
+  onPcm16k?: (pcm: Buffer) => void;
+  /** Cola de audio del avatar (PCM 16 bits estereo 48 kHz) que se envia en tramas de 20 ms. */
+  private queue: Buffer[] = []; private queued = 0;
+  onPlaying?: (playing: boolean) => void; private playing = false;
 
   constructor(cfg: MediaConfig) {
     this.pc = new RTCPeerConnection({
@@ -54,6 +59,7 @@ export class CallMedia {
       const rms = Math.sqrt(sum / Math.max(1, n)) / 32768;
       const sec = n / CH / RATE;
       this.stats.seconds += sec; if (rms > 0.02) this.stats.voiceSeconds += sec; if (rms > this.stats.peak) this.stats.peak = rms;
+      if (this.onPcm16k) this.onPcm16k(down48sTo16m(pcm));
     } catch { /* paquete que no es Opus (por ejemplo comfort noise): se ignora */ }
   }
 
@@ -74,9 +80,59 @@ export class CallMedia {
     }, 20);
   }
 
+  /** Agrega audio del avatar: PCM 16 bits mono a `rate` Hz (24000 para ElevenLabs). */
+  pushVoice(pcm: Buffer, rate: number) {
+    const st = upToStereo48(pcm, rate);
+    this.queue.push(st); this.queued += st.length;
+    if (!this.playing) { this.playing = true; this.onPlaying?.(true); }
+  }
+  /** Corta en seco lo que falta por decir (interrupcion). */
+  flushVoice() { this.queue = []; this.queued = 0; }
+
+  /** Envia la cola del avatar cada 20 ms; si esta vacia, silencio (el flujo de audio no se interrumpe). */
+  startOutput() {
+    const bytes = FRAME * CH * 2;
+    this.sender = setInterval(() => {
+      let frame: Buffer;
+      if (this.queued >= bytes) {
+        const parts: Buffer[] = []; let need = bytes;
+        while (need > 0) { const h = this.queue[0]; if (h.length <= need) { parts.push(h); need -= h.length; this.queue.shift(); } else { parts.push(h.subarray(0, need)); this.queue[0] = h.subarray(need); need = 0; } }
+        this.queued -= bytes; frame = Buffer.concat(parts);
+      } else {
+        frame = Buffer.alloc(bytes);
+        if (this.queued > 0) { Buffer.concat(this.queue).copy(frame); this.queue = []; this.queued = 0; }
+        if (this.playing) { this.playing = false; this.onPlaying?.(false); }
+      }
+      this.sendFrame(frame);
+    }, 20);
+  }
+
   async close() {
     clearInterval(this.sender);
     try { await this.pc.close(); } catch { /* ya cerrada */ }
     this.decoder.delete?.(); this.encoder.delete?.();
   }
+}
+
+/** 48 kHz estereo -> 16 kHz mono (promedio de canales y de cada 3 muestras: filtro simple, suficiente para voz). */
+export function down48sTo16m(pcm: Buffer): Buffer {
+  const frames = Math.floor(pcm.length / 4), out = Buffer.alloc(Math.floor(frames / 3) * 2);
+  for (let o = 0, i = 0; o < out.length; o += 2, i += 3) {
+    let acc = 0;
+    for (let k = 0; k < 3; k++) acc += pcm.readInt16LE((i + k) * 4) + pcm.readInt16LE((i + k) * 4 + 2);
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(acc / 6))), o);
+  }
+  return out;
+}
+/** PCM mono a `rate` Hz -> 48 kHz estereo, por interpolacion lineal. */
+export function upToStereo48(pcm: Buffer, rate: number): Buffer {
+  const n = Math.floor(pcm.length / 2); if (!n) return Buffer.alloc(0);
+  const ratio = RATE / rate, m = Math.floor(n * ratio), out = Buffer.alloc(m * 4);
+  for (let j = 0; j < m; j++) {
+    const x = j / ratio, i = Math.floor(x), f = x - i;
+    const a = pcm.readInt16LE(Math.min(i, n - 1) * 2), b = pcm.readInt16LE(Math.min(i + 1, n - 1) * 2);
+    const v = Math.round(a + (b - a) * f);
+    out.writeInt16LE(v, j * 4); out.writeInt16LE(v, j * 4 + 2);
+  }
+  return out;
 }

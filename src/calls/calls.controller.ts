@@ -1,10 +1,12 @@
 import { Controller, Get, HttpCode, HttpException, Logger, Post, Query, Req } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { ConfigService } from '../config/config.service';
 import { LeadsService } from '../leads/leads.service';
+import { SessionGateway } from '../session/session.gateway';
 import { CallMedia } from './call-media';
+import { CallSocket } from './call-socket';
 
 const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -16,12 +18,14 @@ const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buff
  * Tambien acepta eventos reenviados por otro sistema (por ejemplo n8n) con la cabecera X-Forward-Secret.
  * CALL_MODE=rechazar (por defecto): registra, avisa por Telegram y rechaza.
  * CALL_MODE=prueba (etapa 2): contesta, envia dos pitidos, mide el audio recibido durante CALL_TEST_SECONDS y cuelga.
+ * CALL_MODE=conversar (etapa 3): contesta y conecta la llamada con la misma conversacion del avatar web.
  */
 @Controller('webhooks/whatsapp')
 export class CallsController {
   private readonly log = new Logger(CallsController.name);
   private readonly active = new Map<string, CallMedia>();
-  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService) {}
+  private readonly sockets = new Map<string, CallSocket>();
+  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway) {}
 
   @Get()
   verify(@Query('hub.mode') mode: string, @Query('hub.verify_token') token: string, @Query('hub.challenge') challenge: string) {
@@ -57,13 +61,61 @@ export class CallsController {
     if (call.event === 'connect') {
       this.log.log(`llamada entrante ${call.id} de ${who}; oferta SDP de ${String(call.session?.sdp ?? '').length} caracteres`);
       if (this.cfg.callMode === 'prueba' && call.session?.sdp && this.active.size < this.cfg.callMax) return this.testCall(call.id, call.session.sdp, who);
+      if (this.cfg.callMode === 'conversar' && call.session?.sdp && this.active.size < this.cfg.callMax) return this.talkCall(call.id, call.session.sdp, who, call.from);
       void this.leads.telegram(`📞 Llamada de WhatsApp entrante de ${who}.\nEl avatar aún no contesta llamadas; se rechazó.`);
       const err = await this.callAction(call.id, 'reject');
       this.log.log(err ? `no se pudo rechazar ${call.id}: ${err}` : `llamada ${call.id} rechazada`);
     } else if (call.event === 'terminate') {
       this.log.log(`llamada ${call.id} terminada: ${call.status ?? 'sin estado'}${call.duration ? `, ${call.duration} s` : ''}`);
+      this.sockets.get(call.id)?.hangup(); this.sockets.delete(call.id);
       const m = this.active.get(call.id); if (m) { this.active.delete(call.id); await m.close(); }
+      if (this.cfg.callMode === 'conversar' && call.duration) void this.leads.telegram(`📞 Terminó la llamada con el avatar (${call.duration} s).`);
     }
+  }
+
+  /** Etapa 3: contestar y conectar la llamada con la conversacion del avatar (escucha, modelo, voz, herramientas). */
+  private async talkCall(id: string, offer: string, who: string, from?: string) {
+    const media = new CallMedia({ publicIp: this.cfg.callPublicIp, portMin: this.cfg.callPortMin, portMax: this.cfg.callPortMax });
+    this.active.set(id, media);
+    const t0 = Date.now();
+    let rate = 24000;
+    const socket = new CallSocket(
+      (msg) => {                                              // lo que la conversacion le manda al "navegador"
+        if (msg.type === 'speech_start') { media.flushVoice(); rate = msg.sampleRate ?? rate; }
+        else if (msg.type === 'audio' && msg.audio) media.pushVoice(Buffer.from(msg.audio, 'base64'), rate);
+        else if (msg.type === 'interrupt') media.flushVoice();
+        else if (msg.type === 'error') this.log.warn(`llamada ${id}: la conversación avisó ${msg.reason}`);
+      },
+      () => { void this.hangupFromServer(id); },              // la conversacion se cerro (tiempo maximo, inactividad)
+    );
+    try {
+      const sdp = await media.answer(offer);
+      let err = await this.callAction(id, 'pre_accept', sdp);
+      if (!err) err = await this.callAction(id, 'accept', sdp);
+      if (err) throw new Error(err);
+      this.log.log(`llamada ${id} contestada por el avatar en ${Date.now() - t0} ms`);
+      media.onPcm16k = (pcm) => socket.audio(pcm);
+      media.onPlaying = (playing) => socket.json({ type: 'playback', playing });
+      media.startOutput();
+      this.sockets.set(id, socket);
+      this.gateway.handleConnection(socket as any);
+      const phone = from ? `+${String(from).replace(/\D/g, '')}` : undefined;
+      const visitor = from ? createHash('sha256').update(`wa:${from}`).digest('hex').slice(0, 32) : undefined; // memoria por numero
+      socket.json({ type: 'hello', phone, visitor });
+      void this.leads.telegram(`📞 El avatar contestó una llamada de WhatsApp de ${who}.`);
+    } catch (e) {
+      this.log.error(`llamada ${id}: ${(e as Error).message}`);
+      this.active.delete(id); await media.close();
+      await this.callAction(id, 'terminate');
+    }
+  }
+
+  private async hangupFromServer(id: string) {
+    this.sockets.delete(id);
+    const m = this.active.get(id);
+    if (m) { this.active.delete(id); await m.close(); }
+    const err = await this.callAction(id, 'terminate');
+    this.log.log(err ? `no se pudo colgar ${id}: ${err}` : `llamada ${id} colgada por el avatar`);
   }
 
   /** Etapa 2: contestar, enviar dos pitidos, medir el audio que llega y colgar. */

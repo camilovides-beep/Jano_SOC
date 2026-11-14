@@ -4,6 +4,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import { OwnerService } from '../owner/owner.service';
+import { INTERNAL } from '../calls/call-socket';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
@@ -41,6 +42,7 @@ interface Session {
   clientPlaying: boolean; // el navegador sigue reproduciendo la respuesta
   lastActivity: number;
   visitor?: string;      // identificador del navegador, para recordar a quien vuelve
+  callerPhone?: string;  // llamada de WhatsApp: numero de quien llama (lo pone el servidor, nunca el navegador)
   userTurns: number;
   langs: string[];       // idiomas detectados en la frase en curso
   lastLang: string;      // idioma del ultimo texto reconocido (tambien en resultados parciales)
@@ -125,7 +127,8 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly knowledge: KnowledgeService,
   ) {}
 
-  handleConnection(client: WebSocket, req: IncomingMessage) {
+  handleConnection(client: WebSocket, req?: IncomingMessage) {
+    const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
     const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [] };
@@ -135,9 +138,10 @@ export class SessionGateway implements OnGatewayConnection {
       let msg: any; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!s.ready) {
         if (msg?.type !== 'hello') return;
-        if (!s.owner && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
+        if (!s.owner && !internal && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
         if (!s.owner && this.memory.valid(msg.visitor)) s.visitor = msg.visitor;
+        if (internal && typeof msg.phone === 'string' && /^\+?\d{8,15}$/.test(msg.phone)) s.callerPhone = msg.phone;
         clearTimeout(authTimer); this.start(client, s);
         return;
       }
@@ -156,10 +160,13 @@ export class SessionGateway implements OnGatewayConnection {
       ? `\nTarjetas en pantalla: si tu respuesta trata de uno de estos temas, agrega UNA etiqueta [c:tema] para mostrar su tarjeta: ${cardIds.filter((c) => c !== 'contacto').join(', ')}.` +
         (cardIds.includes('contacto') ? ' Si la persona quiere contactar a Javier, seguir por WhatsApp o prefiere no dictar sus datos, agrega [c:contacto] para mostrarle un código QR y dile que lo escanee.' : '')
       : '';
+    const callNote = s.callerPhone
+      ? `\n\nEsta conversación es una LLAMADA de WhatsApp: no hay pantalla, solo voz. La persona llama desde el número ${s.callerPhone}. Si quiere que Javier la contacte, NO le pidas el número: usa ese mismo como contacto, confírmale que la contactarán a ese WhatsApp y pídele su autorización. No ofrezcas códigos QR ni nada visual.`
+      : '';
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES + cardRules + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
