@@ -36,6 +36,8 @@ export class ConfigService {
   readonly contactTitle: string;
   readonly contactCaption: string;
   readonly cardsFile: string;
+  /** Tarjetas en pantalla (servicios y QR). Apagadas por defecto. */
+  readonly cardsEnabled: boolean;
   /** Dias que se recuerda a un visitante (0 = sin memoria). */
   readonly visitorMemoryDays: number;
   readonly maxSessions: number;
@@ -86,6 +88,7 @@ export class ConfigService {
     this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
     this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Javier');
     this.cardsFile = str('CARDS_FILE', 'content/tarjetas.json');
+    this.cardsEnabled = ['true', '1', 'si', 'sí'].includes(str('CARDS_ENABLED', 'false').toLowerCase());
     this.visitorMemoryDays = int('VISITOR_MEMORY_DAYS', 90, 0);
     const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
     this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';

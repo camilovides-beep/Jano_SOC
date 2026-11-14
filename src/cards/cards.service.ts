@@ -26,9 +26,10 @@ export class CardsService {
   }
 
   /** Identificadores que el modelo puede usar (incluye "contacto" solo si hay direccion configurada). */
-  ids(): string[] { return [...Object.keys(this.cards), ...(this.cfg.contactUrl ? ['contacto'] : [])]; }
+  ids(): string[] { return this.cfg.cardsEnabled ? [...Object.keys(this.cards), ...(this.cfg.contactUrl ? ['contacto'] : [])] : []; }
 
   get(id: string): Card | null {
+    if (!this.cfg.cardsEnabled) return null;
     if (id === 'contacto') {
       if (!this.qr) return null;
       return { title: this.cfg.contactTitle, lines: [], qr: this.qr, caption: this.cfg.contactCaption };
