@@ -12,6 +12,7 @@ import { OwnerService } from './owner/owner.service';
 import { PlaneMcpService } from './mcp/plane-mcp.service';
 import { LeadsService } from './leads/leads.service';
 import { CardsService } from './cards/cards.service';
+import { KnowledgeService } from './knowledge/knowledge.service';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
@@ -24,6 +25,6 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
     }),
   ],
   controllers: [HealthController, OwnerController],
-  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, LeadsService, CardsService, MemoryService, SessionGateway],
+  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

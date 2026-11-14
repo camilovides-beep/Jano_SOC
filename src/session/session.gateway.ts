@@ -7,6 +7,7 @@ import { OwnerService } from '../owner/owner.service';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import { MemoryService } from '../memory/memory.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { ToolsService } from '../tools/tools.service';
@@ -44,6 +45,7 @@ interface Session {
   langs: string[];       // idiomas detectados en la frase en curso
   lastLang: string;      // idioma del ultimo texto reconocido (tambien en resultados parciales)
   spec?: Spec;
+  ctxCache?: { key: string; ctx: Promise<string> }; // contexto de la base de conocimiento para la frase en curso
   specTimer?: NodeJS.Timeout;
   leads: number;         // interesados guardados en esta sesion (tope contra abuso)
   timers: NodeJS.Timeout[];
@@ -120,6 +122,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   handleConnection(client: WebSocket, req: IncomingMessage) {
@@ -232,6 +235,27 @@ export class SessionGateway implements OnGatewayConnection {
     return turn;
   }
 
+  /**
+   * Fragmentos de la base de conocimiento que tienen que ver con lo que dijo la persona, listos para pegar al mensaje.
+   * Se guarda por texto: el arranque anticipado y la respuesta definitiva comparten la misma consulta.
+   */
+  private context(s: Session, text: string): Promise<string> {
+    if (!this.knowledge.enabled || words(text) < 3) return Promise.resolve('');
+    const key = norm(text);
+    if (s.ctxCache?.key === key) return s.ctxCache.ctx;
+    const t0 = Date.now();
+    const ctx = this.knowledge.search(text, s.owner, AbortSignal.timeout(900)) // si tarda, se responde sin contexto en vez de hacer esperar
+      .then((hits) => {
+        if (!hits.length) return '';
+        this.log.debug?.(`sesion #${s.n}: conocimiento ${hits.length} fragmentos en ${Date.now() - t0} ms`);
+        return '\n\n(Información de referencia sobre Javier, tomada de su base de conocimiento. Úsala solo si sirve para responder; no la leas literal ni menciones que existe:\n' +
+          hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n') + ')';
+      })
+      .catch((e) => { this.log.warn(`sesion #${s.n}: base de conocimiento no disponible (${(e as Error).message})`); return ''; });
+    s.ctxCache = { key, ctx };
+    return ctx;
+  }
+
   /** Pide por adelantado la respuesta a `text` (primera ronda del modelo) y la va guardando. */
   private speculate(s: Session, text: string) {
     if (!s.ready || s.turn || s.clientPlaying) return;
@@ -241,8 +265,8 @@ export class SessionGateway implements OnGatewayConnection {
     const spec: Spec = { text, lang, ctrl: new AbortController(), events: [], done: false };
     s.spec = spec;
     (async () => {
-      const tools = await this.tools.definitions(s.owner);
-      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) }], tools, spec.ctrl.signal)) {
+      const [tools, ctx] = await Promise.all([this.tools.definitions(s.owner), this.context(s, text)]);
+      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal)) {
         if (ev.type === 'text') spec.tFirst ??= Date.now();
         spec.events.push(ev); spec.wake?.();
       }
@@ -267,14 +291,22 @@ export class SessionGateway implements OnGatewayConnection {
     let hit = !!spec;
     this.send(client, { type: 'user_final', text: userText });
     this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
-    s.history.push({ role: 'user', content: userMsg(userText, lang) });
+    const userEntry = { role: 'user', content: userMsg(userText, lang) };
+    s.history.push(userEntry);
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
     try {
       let buffer = '';
       for (let round = 0; round < (s.owner ? 6 : 4); round++) {
         let toolCalls: { id: string; name: string; arguments: string }[] = [];
         let text = '';
-        const source = round === 0 && spec ? this.drain(spec) : this.llm.chat(s.history, await this.tools.definitions(s.owner), turn.ctrl.signal);
+        let source: AsyncGenerator<LlmEvent>;
+        if (round === 0 && spec) source = this.drain(spec);
+        else {
+          // El contexto de conocimiento acompana al mensaje solo en este turno; en el historial queda el mensaje limpio.
+          const ctx = await this.context(s, userText);
+          const view = ctx ? s.history.map((m) => (m === userEntry ? { ...m, content: m.content + ctx } : m)) : s.history;
+          source = this.llm.chat(view, await this.tools.definitions(s.owner), turn.ctrl.signal);
+        }
         for await (const ev of source) {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
           turn.tLlm ??= Date.now();

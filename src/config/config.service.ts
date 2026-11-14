@@ -40,6 +40,15 @@ export class ConfigService {
   readonly whatsappHeaderImageUrl: string;
   readonly whatsappApiVersion: string;
   readonly whatsappDefaultCountry: string;
+  /** Base de conocimiento: embeddings de NVIDIA + Qdrant. Sin clave o sin direccion = desactivada. */
+  readonly nvidiaApiKey: string;
+  readonly embedModel: string;
+  readonly qdrantUrl: string;
+  readonly qdrantApiKey: string;
+  readonly qdrantCollection: string;
+  readonly knowledgeDir: string;
+  readonly knowledgeTopK: number;
+  readonly knowledgeMinScore: number;
   readonly contactUrl: string;
   readonly contactTitle: string;
   readonly contactCaption: string;
@@ -99,6 +108,14 @@ export class ConfigService {
     this.whatsappHeaderImageUrl = str('WHATSAPP_HEADER_IMAGE_URL');
     this.whatsappApiVersion = str('WHATSAPP_API_VERSION', 'v27.0');
     this.whatsappDefaultCountry = str('WHATSAPP_DEFAULT_COUNTRY', '57');
+    this.nvidiaApiKey = str('NVIDIA_API_KEY');
+    this.embedModel = str('EMBED_MODEL', 'nvidia/nemotron-3.5-embed-8b');
+    this.qdrantUrl = str('QDRANT_URL').replace(/\/+$/, '');
+    this.qdrantApiKey = str('QDRANT_API_KEY') || str('QDRANT__SERVICE__API_KEY');
+    this.qdrantCollection = str('QDRANT_COLLECTION', 'minijavi');
+    this.knowledgeDir = str('KNOWLEDGE_DIR', 'conocimiento');
+    this.knowledgeTopK = int('KNOWLEDGE_TOP_K', 3, 1);
+    this.knowledgeMinScore = Number(str('KNOWLEDGE_MIN_SCORE', '0.25'));
     this.contactUrl = str('CONTACT_URL');
     this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
     this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Javier');

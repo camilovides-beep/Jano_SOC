@@ -1,6 +1,7 @@
 node_modules
 dist
 data
+conocimiento
 .env
 .env.*
 !.env.example

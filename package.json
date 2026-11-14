@@ -7,7 +7,8 @@
     "vendor": "node scripts/copy-vendor.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-vendor.mjs",
     "start": "node dist/main.js",
-    "dev": "npm run build && node dist/main.js"
+    "dev": "npm run build && node dist/main.js",
+    "conocimiento": "tsc -p tsconfig.json && node dist/knowledge/ingest.js"
   },
   "engines": {
     "node": ">=20.12"
