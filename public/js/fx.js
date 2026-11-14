@@ -1,4 +1,4 @@
-// Efectos de pantalla: lluvia de emojis y confeti por reaccion, y fondos animados por tema.
+// Efectos de pantalla: lluvia de emojis por reaccion y fondos animados por tema.
 const EMOJIS = {
   sorpresa: ['⚠️', '🚨', '😳'],
   alegria: ['❤️', '💖', '😍', '💕'],
@@ -8,8 +8,6 @@ const EMOJIS = {
   celebracion: ['🎉', '🥳', '🎊', '✨'],
   despedida: ['👋', '✨', '🙌'],
 };
-const CONFETTI = new Set(['celebracion', 'despedida']);
-const COLORS = ['#ff5a5f', '#ffb400', '#00c2a8', '#4f8cff', '#b86bff', '#ffffff'];
 
 export function emojiBurst(layer, name) {
   const set = EMOJIS[name]; if (!set) return;
@@ -23,23 +21,6 @@ export function emojiBurst(layer, name) {
     el.style.setProperty('--dx', `${side * (10 + Math.random() * 50)}px`);
     el.style.setProperty('--rot', `${(Math.random() - 0.5) * 50}deg`);
     el.style.animationDelay = `${Math.random() * 0.5}s`;
-    el.addEventListener('animationend', () => el.remove());
-    layer.appendChild(el);
-  }
-  if (CONFETTI.has(name)) confetti(layer);
-}
-
-function confetti(layer) {
-  for (let i = 0; i < 70; i++) {
-    const el = document.createElement('span');
-    el.className = 'confetti';
-    el.style.left = `${Math.random() * 100}%`;
-    el.style.background = COLORS[i % COLORS.length];
-    el.style.width = `${6 + Math.random() * 6}px`; el.style.height = `${10 + Math.random() * 10}px`;
-    el.style.setProperty('--dx', `${(Math.random() - 0.5) * 160}px`);
-    el.style.setProperty('--rot', `${(Math.random() - 0.5) * 1080}deg`);
-    el.style.animationDuration = `${2.2 + Math.random() * 1.6}s`;
-    el.style.animationDelay = `${Math.random() * 0.6}s`;
     el.addEventListener('animationend', () => el.remove());
     layer.appendChild(el);
   }

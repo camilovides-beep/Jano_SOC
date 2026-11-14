@@ -34,6 +34,12 @@ interface Session {
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
+/** Frase que se dice mientras una herramienta consulta su dato (evita el silencio de la espera). */
+const FILLERS: Record<string, string> = {
+  clima: 'Déjame mirar cómo está el clima.',
+  precio_dolar: 'Ya te digo a cómo está.',
+};
+
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
 const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);
@@ -188,6 +194,8 @@ export class SessionGateway implements OnGatewayConnection {
         if (buffer.trim()) { this.say(client, s, turn, buffer); buffer = ''; } // fin de la ronda: lo pendiente sale ya
         if (!toolCalls.length) break;
         s.history.push({ role: 'assistant', content: text || null, tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) });
+        // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
+        if (!turn.spoken) this.say(client, s, turn, FILLERS[toolCalls[0].name] ?? 'Dame un segundo.');
         for (const c of toolCalls) {
           const result = await this.tools.run(c.name, c.arguments);
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);

@@ -18,6 +18,7 @@ export class ConfigService {
   readonly systemPrompt: string;
   readonly greeting: string;
   readonly timezone: string;
+  readonly defaultCity: string;
   readonly maxSessions: number;
   readonly sessionMaxSeconds: number;
   readonly idleSeconds: number;
@@ -47,6 +48,7 @@ export class ConfigService {
     this.deepseekApiKey = required('DEEPSEEK_API_KEY');
     this.deepseekModel = str('DEEPSEEK_MODEL', 'deepseek-flash');
     this.timezone = str('TIMEZONE', 'America/Bogota');
+    this.defaultCity = str('DEFAULT_CITY', 'Sincelejo');
     this.greeting = str('GREETING', '¡Hola! Soy Javier. ¿De qué quieres hablar?');
     this.maxSessions = int('MAX_SESSIONS', 2, 1);
     this.sessionMaxSeconds = int('SESSION_MAX_SECONDS', 600, 10);

@@ -38,8 +38,6 @@ button.ghost { background: rgba(255, 255, 255, .12); }
   70% { opacity: 1; }
   100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), -170px) scale(1) rotate(var(--rot)); }
 }
-.confetti { position: absolute; top: -24px; border-radius: 2px; opacity: .95; animation: confetti-fall 3s cubic-bezier(.2, .6, .4, 1) forwards; will-change: transform; }
-@keyframes confetti-fall { 100% { transform: translate(var(--dx), 108vh) rotate(var(--rot)); opacity: .9; } }
 /* Modo espera: el avatar queda a la vista y solo hay una invitacion abajo. */
 .gate.standby { background: none; backdrop-filter: none; place-items: end center; padding-bottom: max(9vh, 40px); cursor: pointer; }
 .gate.standby .gate-card { background: rgba(10, 13, 17, .62); backdrop-filter: blur(8px); box-shadow: none; padding: 14px 22px; width: auto; max-width: min(520px, 92vw); text-align: center; animation: breathe 2.6s ease-in-out infinite; }
