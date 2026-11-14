@@ -25,6 +25,8 @@ export class CallsController {
   private readonly log = new Logger(CallsController.name);
   private readonly active = new Map<string, CallMedia>();
   private readonly sockets = new Map<string, CallSocket>();
+  /** Transcripcion de cada llamada en curso: quien llama, inicio y las frases de cada lado. */
+  private readonly logs = new Map<string, { who: string; start: number; lines: string[]; avatar: string; speech: number }>();
   constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway) {}
 
   @Get()
@@ -68,8 +70,7 @@ export class CallsController {
     } else if (call.event === 'terminate') {
       this.log.log(`llamada ${call.id} terminada: ${call.status ?? 'sin estado'}${call.duration ? `, ${call.duration} s` : ''}`);
       this.sockets.get(call.id)?.hangup(); this.sockets.delete(call.id);
-      const m = this.active.get(call.id); if (m) { this.active.delete(call.id); await m.close(); }
-      if (this.cfg.callMode === 'conversar' && call.duration) void this.leads.telegram(`📞 Terminó la llamada con el avatar (${call.duration} s).`);
+      const m = this.active.get(call.id); if (m) { this.active.delete(call.id); await this.report(call.id, m, call.duration); await m.close(); }
     }
   }
 
@@ -79,11 +80,14 @@ export class CallsController {
     this.active.set(id, media);
     const t0 = Date.now();
     let rate = 24000;
+    this.logs.set(id, { who, start: Date.now(), lines: [], avatar: '', speech: 0 });
     const socket = new CallSocket(
       (msg) => {                                              // lo que la conversacion le manda al "navegador"
-        if (msg.type === 'speech_start') { media.flushVoice(); rate = msg.sampleRate ?? rate; }
-        else if (msg.type === 'audio' && msg.audio) media.pushVoice(Buffer.from(msg.audio, 'base64'), rate);
-        else if (msg.type === 'interrupt') media.flushVoice();
+        const log = this.logs.get(id);
+        if (msg.type === 'speech_start') { media.flushVoice(); rate = msg.sampleRate ?? rate; this.flushAvatar(id); if (log) log.speech = msg.id; }
+        else if (msg.type === 'audio' && msg.audio) { media.pushVoice(Buffer.from(msg.audio, 'base64'), rate); if (log && msg.align?.chars) log.avatar += msg.align.chars.join(''); }
+        else if (msg.type === 'user_final' && log) { this.flushAvatar(id); log.lines.push(`🧑 ${msg.text}`); }
+        else if (msg.type === 'interrupt') { media.flushVoice(); if (log && log.avatar) log.avatar += ' [interrumpido]'; }
         else if (msg.type === 'error') this.log.warn(`llamada ${id}: la conversación avisó ${msg.reason}`);
       },
       () => { void this.hangupFromServer(id); },              // la conversacion se cerro (tiempo maximo, inactividad)
@@ -113,9 +117,32 @@ export class CallsController {
   private async hangupFromServer(id: string) {
     this.sockets.delete(id);
     const m = this.active.get(id);
-    if (m) { this.active.delete(id); await m.close(); }
+    if (m) { this.active.delete(id); await this.report(id, m); await m.close(); }
     const err = await this.callAction(id, 'terminate');
     this.log.log(err ? `no se pudo colgar ${id}: ${err}` : `llamada ${id} colgada por el avatar`);
+  }
+
+  private flushAvatar(id: string) {
+    const log = this.logs.get(id); if (!log) return;
+    const t = log.avatar.replace(/\s+/g, ' ').trim(); if (t) log.lines.push(`🤖 ${t}`); log.avatar = '';
+  }
+
+  /** Al terminar: transcripcion y grabacion de la llamada a Telegram (mas adelante iran a un panel). */
+  private async report(id: string, media: CallMedia, duration?: number) {
+    this.flushAvatar(id);
+    const log = this.logs.get(id); this.logs.delete(id);
+    if (!log) return;
+    const secs = duration ?? Math.round((Date.now() - log.start) / 1000);
+    const st = media.stats;
+    const head = `📞 Llamada con el avatar — ${log.who}\n⏱ ${secs} s · audio recibido ${st.seconds.toFixed(0)} s · ICE: ${st.iceLog.join(' → ') || st.ice}`;
+    const body = log.lines.length ? log.lines.join('\n') : '(no hubo conversación reconocida)';
+    const err = await this.leads.telegramLong(`${head}\n\n${body}`);
+    if (err) this.log.warn(`transcripcion de ${id}: ${err}`);
+    const wav = media.recording();
+    if (wav && wav.length > 44 + 32000) {
+      const e2 = await this.leads.telegramFile(wav, `llamada-${new Date(log.start).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.wav`, `Grabación: ${log.who}, ${secs} s`);
+      if (e2) this.log.warn(`grabacion de ${id}: ${e2}`);
+    }
   }
 
   /** Etapa 2: contestar, enviar dos pitidos, medir el audio que llega y colgar. */

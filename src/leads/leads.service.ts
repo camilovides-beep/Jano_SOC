@@ -107,6 +107,27 @@ export class LeadsService {
     return wa;
   }
 
+  /** Envia un archivo por el bot de Telegram (por ejemplo la grabacion de una llamada). Devuelve '' o el motivo del fallo. */
+  async telegramFile(file: Buffer, filename: string, caption: string): Promise<string> {
+    if (!this.cfg.telegramBotToken || !this.cfg.telegramChatId) return 'Telegram no está configurado';
+    try {
+      const form = new FormData();
+      form.append('chat_id', this.cfg.telegramChatId);
+      form.append('caption', caption.slice(0, 1000));
+      form.append('document', new Blob([new Uint8Array(file)], { type: 'audio/wav' }), filename);
+      const res = await fetch(`https://api.telegram.org/bot${this.cfg.telegramBotToken}/sendDocument`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+      if (res.ok) return '';
+      const d: any = await res.json().catch(() => ({}));
+      return `Telegram respondió ${res.status}: ${d.description ?? 'sin detalle'}`;
+    } catch (e) { return `no se pudo enviar el archivo a Telegram: ${(e as Error).name}`; }
+  }
+
+  /** Envia un texto largo partido en mensajes de hasta ~3.800 caracteres. */
+  async telegramLong(text: string) {
+    for (let i = 0; i < text.length; i += 3800) { const err = await this.telegram(text.slice(i, i + 3800)); if (err) return err; }
+    return '';
+  }
+
   /** Avisos de un interesado nuevo: Telegram y, si esta configurado, un webhook (por ejemplo n8n). */
   private async notify(lead: Lead, whatsapp?: string) {
     if (this.cfg.telegramBotToken && this.cfg.telegramChatId) {
