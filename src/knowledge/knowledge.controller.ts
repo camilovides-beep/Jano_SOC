@@ -1,5 +1,5 @@
-import { Body, Controller, HttpCode, HttpException, Post, Req } from '@nestjs/common';
-import { timingSafeEqual } from 'node:crypto';
+import { Body, Controller, HttpCode, Post, Req } from '@nestjs/common';
+import { checkN8nSecret } from '../n8n/n8n.controller';
 import type { Request } from 'express';
 import { ConfigService } from '../config/config.service';
 import { KnowledgeService } from './knowledge.service';
@@ -16,11 +16,11 @@ export class KnowledgeController {
   @Post('search')
   @HttpCode(200)
   async search(@Req() req: Request, @Body() body: { query?: string }) {
-    const got = Buffer.from(String(req.headers['x-forward-secret'] ?? '')), want = Buffer.from(this.cfg.n8nSecret);
-    if (!this.cfg.n8nSecret || got.length !== want.length || !timingSafeEqual(got, want)) throw new HttpException('no autorizado', 401);
+    checkN8nSecret(req, this.cfg.n8nSecret);
     const query = String(body?.query ?? '').trim().slice(0, 1000);
     if (!query || !this.kb.enabled) return { context: '', hits: [] };
-    const hits = await this.kb.search(query, false).catch(() => []);
+    // tope de 3 s: si NVIDIA o Qdrant tardan, se responde sin contexto en vez de dejar esperando a n8n
+    const hits = await this.kb.search(query, false, AbortSignal.timeout(3000)).catch(() => []);
     return {
       context: hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n'),
       hits: hits.map((h) => ({ text: h.text, source: h.source, score: Number(h.score.toFixed(3)) })),
