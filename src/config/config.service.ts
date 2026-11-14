@@ -32,6 +32,14 @@ export class ConfigService {
   readonly telegramBotToken: string;
   readonly telegramChatId: string;
   /** Direccion del QR de contacto (por ejemplo un enlace de WhatsApp). Vacia = sin QR. */
+  /** WhatsApp Cloud API: plantilla que se envia a cada interesado. Sin token = desactivado. */
+  readonly whatsappToken: string;
+  readonly whatsappPhoneNumberId: string;
+  readonly whatsappTemplate: string;
+  readonly whatsappTemplateLang: string;
+  readonly whatsappHeaderImageUrl: string;
+  readonly whatsappApiVersion: string;
+  readonly whatsappDefaultCountry: string;
   readonly contactUrl: string;
   readonly contactTitle: string;
   readonly contactCaption: string;
@@ -84,6 +92,13 @@ export class ConfigService {
     this.leadsWebhookUrl = str('LEADS_WEBHOOK_URL');
     this.telegramBotToken = str('TELEGRAM_BOT_TOKEN');
     this.telegramChatId = str('TELEGRAM_CHAT_ID');
+    this.whatsappToken = str('WHATSAPP_TOKEN');
+    this.whatsappPhoneNumberId = str('WHATSAPP_PHONE_NUMBER_ID');
+    this.whatsappTemplate = str('WHATSAPP_TEMPLATE');
+    this.whatsappTemplateLang = str('WHATSAPP_TEMPLATE_LANG', 'es_MX');
+    this.whatsappHeaderImageUrl = str('WHATSAPP_HEADER_IMAGE_URL');
+    this.whatsappApiVersion = str('WHATSAPP_API_VERSION', 'v27.0');
+    this.whatsappDefaultCountry = str('WHATSAPP_DEFAULT_COUNTRY', '57');
     this.contactUrl = str('CONTACT_URL');
     this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
     this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Javier');

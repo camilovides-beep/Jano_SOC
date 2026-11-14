@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ConfigService } from '../config/config.service';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 export const INTERESTS = ['chatbots', 'agentes_de_voz', 'bots_de_whatsapp', 'automatizacion', 'dashboards', 'despliegue_y_servidores', 'desarrollo_de_software', 'otro'] as const;
 export const STATUSES = ['nuevo', 'contactado', 'en_conversacion', 'cliente', 'descartado'] as const;
@@ -24,7 +25,7 @@ export class LeadsService {
   private readonly log = new Logger(LeadsService.name);
   private readonly db: DatabaseSync;
 
-  constructor(private readonly cfg: ConfigService) {
+  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService) {
     mkdirSync(cfg.dataDir, { recursive: true });
     this.db = new DatabaseSync(join(cfg.dataDir, 'leads.db'));
     this.db.exec(`CREATE TABLE IF NOT EXISTS leads (
@@ -49,7 +50,6 @@ export class LeadsService {
       .run(lead.created_at, lead.name, lead.contact, lead.company, lead.interest, lead.detail);
     const saved = this.get(Number(r.lastInsertRowid))!;
     this.log.log(`interesado #${saved.id} registrado (${saved.interest})`);
-    void this.notify(saved);
     return saved;
   }
 
@@ -71,13 +71,14 @@ export class LeadsService {
   }
 
   /** Texto del aviso de un interesado. */
-  message(lead: Lead): string {
+  message(lead: Lead, whatsapp?: string): string {
     return [
       '🔔 Nuevo interesado',
       `👤 ${lead.name}${lead.company ? ` — ${lead.company}` : ''}`,
       `📞 ${lead.contact}`,
       `🧩 ${lead.interest.replaceAll('_', ' ')}`,
       lead.detail ? `📝 ${lead.detail}` : '',
+      whatsapp === undefined ? '' : whatsapp === '' ? '✅ Plantilla de WhatsApp enviada' : `⚠️ WhatsApp no enviado: ${whatsapp}`,
       `#${lead.id} · ${new Intl.DateTimeFormat('es-CO', { timeZone: this.cfg.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(lead.created_at))}`,
     ].filter(Boolean).join('\n');
   }
@@ -96,10 +97,20 @@ export class LeadsService {
     } catch (e) { return `no se pudo conectar con Telegram: ${(e as Error).name}`; } // sin el mensaje: podria traer la URL con el token
   }
 
+  /**
+   * Tras guardar un interesado: le envia la plantilla de WhatsApp y avisa a Javier por Telegram (y por webhook si hay).
+   * Devuelve '' si la plantilla se envio, el motivo si no, o undefined si WhatsApp no esta configurado.
+   */
+  async announce(lead: Lead): Promise<string | undefined> {
+    const wa = this.whatsapp.enabled ? await this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest) : undefined;
+    void this.notify(lead, wa);
+    return wa;
+  }
+
   /** Avisos de un interesado nuevo: Telegram y, si esta configurado, un webhook (por ejemplo n8n). */
-  private async notify(lead: Lead) {
+  private async notify(lead: Lead, whatsapp?: string) {
     if (this.cfg.telegramBotToken && this.cfg.telegramChatId) {
-      const err = await this.telegram(this.message(lead));
+      const err = await this.telegram(this.message(lead, whatsapp));
       if (err) this.log.warn(`aviso de interesado #${lead.id}: ${err}`); else this.log.log(`interesado #${lead.id} avisado por Telegram`);
     }
     if (!this.cfg.leadsWebhookUrl) return;

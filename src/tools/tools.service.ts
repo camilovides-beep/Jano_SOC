@@ -119,12 +119,14 @@ export class ToolsService {
           },
           required: ['nombre', 'contacto', 'interes', 'autoriza'],
         },
-        run: (args) => {
+        run: async (args) => {
           if (args.autoriza !== true) return 'No se guardó: falta la autorización de la persona. Pregúntale si autoriza guardar sus datos.';
           const nombre = String(args.nombre ?? '').trim(), contacto = String(args.contacto ?? '').trim();
           if (nombre.length < 2 || contacto.length < 5) return 'No se guardó: falta el nombre o el dato de contacto. Pídeselo.';
           const lead = this.leads.add({ name: nombre, contact: contacto, company: String(args.empresa ?? ''), interest: String(args.interes ?? 'otro'), detail: String(args.detalle ?? '') });
-          return `Guardado con el número ${lead.id}. Dile que Javier lo contactará pronto y agradécele.`;
+          const wa = await this.leads.announce(lead);
+          const extra = wa === '' ? ' Además se le acaba de enviar un mensaje de Javier por WhatsApp a ese número: dile que lo revise y que puede responder por ahí.' : '';
+          return `Guardado con el número ${lead.id}.${extra} Dile que Javier lo contactará pronto y agradécele.`;
         },
       },
     };
