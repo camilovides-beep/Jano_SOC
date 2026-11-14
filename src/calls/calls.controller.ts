@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { ConfigService } from '../config/config.service';
 import { LeadsService } from '../leads/leads.service';
+import { CallMedia } from './call-media';
 
 const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -13,11 +14,13 @@ const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buff
  *  - POST con cabecera X-Hub-Signature-256 = "sha256=" + HMAC-SHA256 del cuerpo crudo con el secreto de la app.
  *  - Llamada entrante: entry[].changes[] con field "calls" y value.calls[] {id, from, to, event: connect|terminate, session}.
  * Tambien acepta eventos reenviados por otro sistema (por ejemplo n8n) con la cabecera X-Forward-Secret.
- * ETAPA 1: solo registra la llamada, avisa por Telegram y la rechaza (aun no hay audio).
+ * CALL_MODE=rechazar (por defecto): registra, avisa por Telegram y rechaza.
+ * CALL_MODE=prueba (etapa 2): contesta, envia dos pitidos, mide el audio recibido durante CALL_TEST_SECONDS y cuelga.
  */
 @Controller('webhooks/whatsapp')
 export class CallsController {
   private readonly log = new Logger(CallsController.name);
+  private readonly active = new Map<string, CallMedia>();
   constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService) {}
 
   @Get()
@@ -53,11 +56,38 @@ export class CallsController {
     const who = `${name ? name + ' ' : ''}(${call.from ?? 'número oculto'})`;
     if (call.event === 'connect') {
       this.log.log(`llamada entrante ${call.id} de ${who}; oferta SDP de ${String(call.session?.sdp ?? '').length} caracteres`);
-      void this.leads.telegram(`📞 Llamada de WhatsApp entrante de ${who}.\nEtapa 1: el avatar aún no contesta; la llamada se rechaza.`);
+      if (this.cfg.callMode === 'prueba' && call.session?.sdp && this.active.size < this.cfg.callMax) return this.testCall(call.id, call.session.sdp, who);
+      void this.leads.telegram(`📞 Llamada de WhatsApp entrante de ${who}.\nEl avatar aún no contesta llamadas; se rechazó.`);
       const err = await this.callAction(call.id, 'reject');
       this.log.log(err ? `no se pudo rechazar ${call.id}: ${err}` : `llamada ${call.id} rechazada`);
     } else if (call.event === 'terminate') {
       this.log.log(`llamada ${call.id} terminada: ${call.status ?? 'sin estado'}${call.duration ? `, ${call.duration} s` : ''}`);
+      const m = this.active.get(call.id); if (m) { this.active.delete(call.id); await m.close(); }
+    }
+  }
+
+  /** Etapa 2: contestar, enviar dos pitidos, medir el audio que llega y colgar. */
+  private async testCall(id: string, offer: string, who: string) {
+    const media = new CallMedia({ publicIp: this.cfg.callPublicIp, portMin: this.cfg.callPortMin, portMax: this.cfg.callPortMax });
+    this.active.set(id, media);
+    const t0 = Date.now();
+    try {
+      const sdp = await media.answer(offer);
+      this.log.log(`llamada ${id}: respuesta SDP lista en ${Date.now() - t0} ms (${(sdp.match(/a=candidate/g) ?? []).length} candidatos)`);
+      let err = await this.callAction(id, 'pre_accept', sdp);
+      if (!err) err = await this.callAction(id, 'accept', sdp);
+      if (err) throw new Error(err);
+      this.log.log(`llamada ${id} aceptada en ${Date.now() - t0} ms`);
+      media.startTestAudio(); // el audio sale solo despues del 200 OK de accept
+      await new Promise((r) => setTimeout(r, this.cfg.callTestSeconds * 1000));
+    } catch (e) {
+      this.log.error(`llamada ${id}: ${(e as Error).message}`);
+    } finally {
+      const st = media.stats;
+      if (this.active.has(id)) { await this.callAction(id, 'terminate'); this.active.delete(id); await media.close(); }
+      const msg = `📞 Prueba de llamada de ${who}\nICE: ${st.ice}\nAudio recibido: ${st.packets} paquetes, ${st.seconds.toFixed(1)} s, con voz ${st.voiceSeconds.toFixed(1)} s (pico ${st.peak.toFixed(2)})`;
+      this.log.log(msg.replace(/\n/g, ' | '));
+      void this.leads.telegram(msg);
     }
   }
 

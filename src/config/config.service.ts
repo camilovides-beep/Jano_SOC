@@ -44,6 +44,13 @@ export class ConfigService {
   readonly whatsappVerifyToken: string;
   readonly whatsappAppSecret: string;
   readonly whatsappForwardSecret: string;
+  /** Llamadas: modo (rechazar | prueba), IP publica del VPS, rango de puertos UDP del audio y limites. */
+  readonly callMode: string;
+  readonly callPublicIp: string;
+  readonly callPortMin: number;
+  readonly callPortMax: number;
+  readonly callMax: number;
+  readonly callTestSeconds: number;
   /** Base de conocimiento: embeddings de NVIDIA + Qdrant. Sin clave o sin direccion = desactivada. */
   readonly nvidiaApiKey: string;
   readonly embedModel: string;
@@ -115,6 +122,12 @@ export class ConfigService {
     this.whatsappVerifyToken = str('WHATSAPP_VERIFY_TOKEN');
     this.whatsappAppSecret = str('WHATSAPP_APP_SECRET');
     this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
+    this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
+    this.callPublicIp = str('CALL_PUBLIC_IP');
+    this.callPortMin = int('CALL_UDP_PORT_MIN', 40000, 1024);
+    this.callPortMax = int('CALL_UDP_PORT_MAX', 40009, 1024);
+    this.callMax = int('CALL_MAX', 2, 1);
+    this.callTestSeconds = int('CALL_TEST_SECONDS', 20, 5);
     this.nvidiaApiKey = str('NVIDIA_API_KEY');
     this.embedModel = str('EMBED_MODEL', 'nvidia/nemotron-3.5-embed-8b');
     this.qdrantUrl = str('QDRANT_URL').replace(/\/+$/, '');
