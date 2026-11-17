@@ -25,6 +25,13 @@ button.ghost { background: rgba(255, 255, 255, .12); }
 .gate { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 13, .72); backdrop-filter: blur(6px); padding: 20px; }
 .owner { margin-left: auto; margin-right: 8px; padding: 8px 14px; border-radius: 999px; background: rgba(79, 140, 255, .28); border: 1px solid rgba(79, 140, 255, .7); font-size: 14px; }
 .owner[hidden] { display: none; }
+/* Estado del taller de programacion (Claude Code trabajando) */
+.work { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top)); transform: translateX(-50%); max-width: min(92vw, 720px); padding: 8px 16px; border-radius: 999px;
+  background: rgba(13, 16, 23, .82); border: 1px solid rgba(122, 162, 247, .55); font: 13px ui-monospace, Menlo, Consolas, monospace; color: #c0caf5;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 10px; }
+.work[hidden] { display: none; }
+.work-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #9ece6a; animation: work-pulse 1s ease-in-out infinite; }
+@keyframes work-pulse { 50% { opacity: .25; transform: scale(.7); } }
 .gate[hidden], .mic[hidden], .gate-card input[hidden] { display: none; }
 .gate-card { width: min(420px, 100%); background: #171c23; border-radius: 18px; padding: 26px; display: grid; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
 .gate-card h1 { margin: 0; font-size: 22px; }

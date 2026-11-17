@@ -58,6 +58,8 @@ export class ConfigService {
   readonly tallerMaxTurns: number;
   readonly tallerMaxProjects: number;
   readonly tallerNice: number;
+  /** Cada cuantos segundos el avatar cuenta en voz como va el encargo (0 = no lo cuenta solo). */
+  readonly tallerStatusSeconds: number;
   /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
   readonly publicUrl: string;
   readonly callMode: string;
@@ -141,10 +143,11 @@ export class ConfigService {
     this.n8nSecret = str('N8N_SECRET');
     this.claudeToken = str('CLAUDE_CODE_OAUTH_TOKEN');
     this.claudeBin = str('CLAUDE_BIN', 'claude');
-    this.claudeModel = str('CLAUDE_MODEL');
+    this.claudeModel = str('CLAUDE_MODEL', 'claude-opus-5-5');
     this.tallerUser = str('TALLER_USER');
-    this.tallerMaxMinutes = int('TALLER_MAX_MINUTES', 20, 1);
-    this.tallerMaxTurns = int('TALLER_MAX_TURNS', 120, 1);
+    this.tallerMaxMinutes = int('TALLER_MAX_MINUTES', 30, 1);
+    this.tallerStatusSeconds = int('TALLER_STATUS_SECONDS', 90, 0);
+    this.tallerMaxTurns = int('TALLER_MAX_TURNS', 200, 1);
     this.tallerMaxProjects = int('TALLER_MAX_PROJECTS', 50, 1);
     this.tallerNice = int('TALLER_NICE', 10, 0);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');

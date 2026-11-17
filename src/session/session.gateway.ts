@@ -9,7 +9,7 @@ import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
-import { WorkshopService } from '../workshop/workshop.service';
+import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MemoryService } from '../memory/memory.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { ToolsService } from '../tools/tools.service';
@@ -55,6 +55,9 @@ interface Session {
   origin: string;        // direccion publica por la que entro (para enlaces y QR)
   notes: { text: string; card?: unknown; slug?: string }[]; // avisos del taller pendientes de contar
   noteTimer?: NodeJS.Timeout;
+  startedAt: number;
+  lastTurnEnd: number;   // cuando termino el ultimo turno (para no interrumpir con el estado del taller)
+  lastStatus: number;    // ultima vez que se conto en voz como va el taller
 }
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
@@ -114,10 +117,13 @@ Idioma: responde siempre en el idioma en que la persona te habló en su último 
 Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo: "[r:alegria] ¡Gracias, qué amable!"`;
 
 /** Como usar el taller de programacion. Va solo en sesiones del dueño y si hay token de Claude Code. */
-const TALLER_RULES = `
+const TALLER_RULES = (def: string) => `
 
 TALLER DE PROGRAMACIÓN: puedes encargarle trabajos de programación a Claude Code con la herramienta programar. Tú no programas: conversas con Javier, entiendes lo que quiere y le pasas el encargo completo.
 - Antes de llamar a programar asegúrate de tener lo esencial (qué es, para quién y qué debe lograr). Si falta algo importante, pregúntalo en una sola frase; si Javier dice que decidas tú, decide.
+- Modelo: la primera vez que Javier pida programar algo en esta conversación, ANTES de llamar a programar dile: "Por defecto uso ${def}. ¿Lo dejo así o prefieres otro? Tengo ${MODELS.map((m) => m.label).join(', ')}." Usa su respuesta en el parámetro modelo (si dice que lo dejes, omítelo) y no vuelvas a preguntarlo en esta conversación, salvo que él pida cambiarlo.
+- Si el encargo es grande, Claude Code lo reparte solo entre varios agentes; no tienes que pedírselo.
+- Mientras trabaja, el sistema le va contando a Javier cómo va; si él pregunta, usa estado_taller.
 - En "encargo" escribe todo lo que Javier dijo, con sus detalles: Claude Code no oye esta conversación.
 - El trabajo tarda minutos y corre en segundo plano: dile que ya empezó y sigue conversando. No digas que terminó hasta que llegue el aviso del taller.
 - Un mensaje que empieza por "(Aviso del taller" lo escribió el sistema, no Javier: cuéntale el resultado en dos o tres frases, sin leer nombres de archivos ni código; si Claude Code dejó una pregunta, hazla. Si hay sitio publicado, dile que el código QR está en pantalla.
@@ -147,6 +153,8 @@ export class SessionGateway implements OnGatewayConnection {
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
+    // Progreso del encargo: la pantalla del dueño muestra el fondo de trabajo, el estado y el codigo en las gafas.
+    this.workshop.onProgress((w) => { for (const [, client] of this.owners) this.send(client, { type: 'work', ...w, spoken: undefined }); });
   }
   private readonly owners = new Map<Session, WebSocket>();
 
@@ -159,6 +167,23 @@ export class SessionGateway implements OnGatewayConnection {
       `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}Informe de Claude Code: ${(p.lastSummary ?? 'sin informe').slice(0, 1500)})`;
     s.notes.push({ text, card: card ?? undefined, slug });
     this.pumpNotes(client, s);
+  }
+
+  /** Mientras Claude Code trabaja, el avatar cuenta cada cierto tiempo como va (sin pasar por el modelo). */
+  private workshopStatus(client: WebSocket, s: Session) {
+    const w = this.workshop.state();
+    if (!w.active) return;
+    s.lastActivity = Date.now(); // la sesion no se cierra por inactividad mientras hay un encargo en curso
+    const every = this.cfg.tallerStatusSeconds * 1000, now = Date.now();
+    if (!every || s.turn || s.clientPlaying || s.finals.length || s.notes.length) return;
+    if (now - Math.max(s.lastStatus, now - (w.seconds ?? 0) * 1000) < every || now - s.lastTurnEnd < 15_000) return;
+    s.lastStatus = now;
+    const min = Math.floor((w.seconds ?? 0) / 60), time = min < 1 ? 'menos de un minuto' : min === 1 ? 'un minuto' : `${min} minutos`;
+    const agents = w.agentsTotal ? ` Ha repartido el trabajo en ${w.agentsTotal === 1 ? 'un agente' : `${w.agentsTotal} agentes`}.` : ''; // los agentes corren en segundo plano: solo se sabe cuantos lanzo
+    const turn = this.newTurn(s);
+    this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
+    this.say(client, s, turn, `Sigo con ${w.project}: van ${time} y ${w.steps} pasos.${agents} Ahora ${w.spoken}.`);
+    void this.finish(client, s, turn, 'estado del taller');
   }
 
   /** Cuenta el siguiente aviso cuando nadie esta hablando (ni Javier ni el avatar). */
@@ -177,7 +202,7 @@ export class SessionGateway implements OnGatewayConnection {
     const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [],
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0,
       origin: req?.headers?.host ? `${String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${req.headers.host}` : '' };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
@@ -213,15 +238,18 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES : '') + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
       onClose: (reason) => { if (s.ready) { this.log.warn(`sesion #${s.n}: Deepgram se cerro (${reason})`); this.send(client, { type: 'error', reason: 'escucha' }); client.close(1011, 'stt'); } },
     });
     // Limites: duracion maxima de la sesion e inactividad.
-    s.timers.push(setTimeout(() => { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); }, this.cfg.sessionMaxSeconds * 1000));
+    s.startedAt = Date.now();
     s.timers.push(setInterval(() => {
+      const working = s.owner && !!this.workshop.busy(); // con un encargo en curso la sesion del dueño sigue abierta para ir contandole
+      if (working) this.workshopStatus(client, s);
+      if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
     this.send(client, { type: 'ready', owner: s.owner });
@@ -234,6 +262,7 @@ export class SessionGateway implements OnGatewayConnection {
     }
     if (s.owner) {
       this.owners.set(s, client);
+      if (this.workshop.busy()) this.send(client, { type: 'work', ...this.workshop.state(), spoken: undefined });
       // Encargos que terminaron cuando no habia una sesion abierta: se cuentan despues del saludo.
       for (const p of this.workshop.unseen()) void this.workshopNote(client, s, p.slug);
     }
@@ -477,6 +506,7 @@ export class SessionGateway implements OnGatewayConnection {
     if (!aborted) this.send(client, { type: 'speech_end', id: turn.id });
     if (turn.spoken) s.history.push({ role: 'assistant', content: (turn.tags ? turn.tags + ' ' : '') + turn.spoken });
     if (s.turn === turn) s.turn = undefined;
+    s.lastTurnEnd = Date.now();
     const ms = (t?: number) => (t ? `${t - turn.t0} ms` : 'n/d');
     this.log.log(`sesion #${s.n} ${kind} #${turn.id}${aborted ? ' (interrumpido)' : ''}: primer token LLM ${ms(turn.tLlm)}, primer audio ${ms(turn.tAudio)}, audio ${(turn.samples / TTS_SAMPLE_RATE).toFixed(1)} s`);
   }

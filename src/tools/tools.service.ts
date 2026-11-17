@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
-import { WorkshopService } from '../workshop/workshop.service';
+import { MODELS, WorkshopService } from '../workshop/workshop.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; }
@@ -157,12 +157,13 @@ export class ToolsService {
             proyecto: { type: 'string', description: 'Nombre corto del proyecto, por ejemplo "landing café". Si es uno existente, el mismo nombre.' },
             encargo: { type: 'string', description: 'Qué debe hacer, con TODOS los detalles que dio Javier (producto, público, textos, colores, qué acción debe hacer el visitante). Claude Code no oye la conversación: solo lee esto.' },
             nuevo: { type: 'boolean', description: 'true si es un proyecto nuevo; false u omitido si continúa uno existente.' },
+            modelo: { type: 'string', enum: MODELS.map((m) => m.key), description: `Modelo de Claude Code que eligió Javier: ${MODELS.map((m) => `${m.key} = ${m.label}`).join(', ')}. Omítelo para usar el de por defecto (${workshop.defaultModel.label}).` },
           },
           required: ['proyecto', 'encargo'],
         },
         run: (args: Record<string, unknown>, ctx: ToolContext) => {
           const existing = workshop.find(String(args.proyecto ?? ''));
-          return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0);
+          return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0, args.modelo ? String(args.modelo) : undefined);
         },
       },
       estado_taller: {

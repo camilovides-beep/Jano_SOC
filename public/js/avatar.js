@@ -21,9 +21,10 @@ export async function createAvatar(canvas) {
 
   // Los morph targets estan repartidos en varias mallas: se indexa cada nombre con todas las mallas que lo tienen.
   const morphs = new Map();
+  let lensMesh = null;
   root.traverse((o) => {
     if (!o.isMesh) return;
-    if (o.material?.name === 'Lens') { o.material.depthWrite = false; o.renderOrder = 10; } // cristal de las gafas
+    if (o.material?.name === 'Lens') { o.material.depthWrite = false; o.renderOrder = 10; lensMesh = o; } // cristal de las gafas
     const dict = o.morphTargetDictionary; if (!dict) return;
     for (const [name, index] of Object.entries(dict)) {
       if (!morphs.has(name)) morphs.set(name, []);
@@ -32,6 +33,35 @@ export async function createAvatar(canvas) {
   });
   const setMorph = (name, value) => { const list = morphs.get(name); if (list) for (const m of list) m.mesh.morphTargetInfluences[m.index] = value; };
   const eyeL = root.getObjectByName('Eye_L'), eyeR = root.getObjectByName('Eye_R');
+
+  // Reflejo de pantalla en las gafas: mientras Claude Code programa, sus lineas de codigo suben por los cristales.
+  // El cristal del modelo no trae coordenadas de textura: se proyectan aqui, cada lente por separado.
+  const lens = { k: 0, on: false, lines: [], scroll: 0, mat: null, tex: null, ctx: null, at: 0 };
+  if (lensMesh) {
+    const geo = lensMesh.geometry.clone(), pos = geo.attributes.position, uv = new Float32Array(pos.count * 2);
+    const b = [[Infinity, -Infinity], [Infinity, -Infinity]]; let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), s = x < 0 ? 0 : 1; b[s][0] = Math.min(b[s][0], x); b[s][1] = Math.max(b[s][1], x); y0 = Math.min(y0, pos.getY(i)); y1 = Math.max(y1, pos.getY(i)); }
+    for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), s = x < 0 ? 0 : 1; uv[i * 2] = (x - b[s][0]) / (b[s][1] - b[s][0] || 1); uv[i * 2 + 1] = (pos.getY(i) - y0) / (y1 - y0 || 1); }
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 192;
+    lens.ctx = cv.getContext('2d'); lens.tex = new THREE.CanvasTexture(cv); lens.tex.colorSpace = THREE.SRGBColorSpace;
+    lens.mat = new THREE.MeshBasicMaterial({ map: lens.tex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false });
+    const glow = new THREE.Mesh(geo, lens.mat); glow.renderOrder = 11; glow.visible = false; glow.position.z = 0.002;
+    lensMesh.add(glow); lens.mesh = glow;
+  }
+  const LENS_COLORS = ['#8fe3ff', '#b6ffb0', '#ffe08a', '#d7c2ff', '#ffffff'];
+  function drawLens(dt) {
+    const c = lens.ctx, W = 256, H = 192, lh = 15;
+    lens.scroll += dt * 26;                       // el texto sube como en una terminal
+    while (lens.scroll >= lh && lens.lines.length > 1) { lens.scroll -= lh; lens.lines.push(lens.lines.shift()); }
+    c.clearRect(0, 0, W, H); c.fillStyle = 'rgba(40, 120, 190, 0.12)'; c.fillRect(0, 0, W, H); // brillo azulado de pantalla
+    c.font = '11px ui-monospace, Menlo, Consolas, monospace'; c.textBaseline = 'top';
+    for (let i = 0; i * lh - lens.scroll < H && lens.lines.length; i++) {
+      const line = lens.lines[i % lens.lines.length];
+      c.fillStyle = LENS_COLORS[(line.length + i) % LENS_COLORS.length]; c.fillText(line, 8, i * lh - lens.scroll);
+    }
+    lens.tex.needsUpdate = true;
+  }
 
   // Encuadre: la cabeza completa cabe tanto en horizontal como en vertical (kiosco).
   const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
@@ -126,6 +156,11 @@ export async function createAvatar(canvas) {
     const smileGoal = listening ? 0.25 : (state === 'idle' ? 0.15 : 0);
     smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile * (1 - exSad * k), exSmile * k));
 
+    if (lens.mat) { // el reflejo entra y sale con un fundido
+      lens.k += ((lens.on ? 1 : 0) - lens.k) * (1 - Math.exp(-dt / 0.5));
+      lens.mesh.visible = lens.k > 0.01; lens.mat.opacity = lens.k * (0.62 + Math.sin(clock * 7) * 0.04);
+      if (lens.mesh.visible && clock - lens.at > 1 / 15) { drawLens(clock - lens.at); lens.at = clock; }
+    }
     renderer.render(scene, camera);
   }
 
@@ -134,6 +169,12 @@ export async function createAvatar(canvas) {
     setState(s) { if (s !== state) { state = s; gazeAt = 0; } },
     raiseBrows() { browPulse = 1; },
     react(name) { expr.name = name; expr.t = 0; },
+    /** Reflejo de codigo en las gafas. `lines`: lo que Claude Code esta escribiendo (si no llega nada, se conserva lo anterior). */
+    setWork(active, lines) {
+      lens.on = !!active && !!lens.mat;
+      if (lines?.length) lens.lines = lines.map((l) => String(l).replace(/\t/g, '  ').slice(0, 38));
+      else if (active && !lens.lines.length) lens.lines = ['$ claude -p "..."', 'const avatar = await taller();', 'for (const paso of plan) {', '  await paso.run();', '}', '// trabajando...'];
+    },
     /** Forma de boca que pide la reaccion (se combina con el lip sync). */
     exprMouth,
     morphNames: [...morphs.keys()],

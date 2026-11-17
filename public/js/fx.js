@@ -27,7 +27,7 @@ export function emojiBurst(layer, name) {
   }
 }
 
-/** Fondo animado detras del avatar. show('matrix' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | null). */
+/** Fondo animado detras del avatar. show('matrix' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
 export function createBackdrop(canvas) {
   const ctx = canvas.getContext('2d');
   const GLYPHS = 'アイウエオカキクケコサシスセソ01{}<>/=;λπ∑01'.split('');
@@ -105,6 +105,38 @@ export function createBackdrop(canvas) {
     sky('#161c26', '#3a4350'); drawClouds('rgba(70, 78, 92, 0.6)'); drawRain(0.6);
     if (flash <= 0 && Math.random() < 0.012) flash = 1;      // relampago ocasional
     if (flash > 0) { ctx.fillStyle = `rgba(235, 240, 255, ${0.5 * flash})`; ctx.fillRect(0, 0, W, H); flash -= 0.18; }
+  };
+  // Fondo de trabajo: mientras Claude Code programa, un editor oscuro donde el codigo se va escribiendo y sube.
+  const PALETTE = ['#7aa2f7', '#bb9af7', '#9ece6a', '#e0af68', '#7dcfff', '#c0caf5'];
+  let codeLines = [], codeScroll = 0;
+  const newLine = () => {
+    const indent = ((Math.random() * 4) | 0) * 2, blocks = []; let n = 1 + ((Math.random() * 5) | 0);
+    if (Math.random() < 0.12) n = 0; // linea en blanco
+    while (n--) blocks.push({ w: 2 + ((Math.random() * 9) | 0), c: PALETTE[(Math.random() * PALETTE.length) | 0] });
+    return { indent, blocks, typed: 0 };
+  };
+  draw.codigo = () => {
+    const lh = size * 1.5, ch = size * 0.62, rows = Math.ceil(H / lh) + 2;
+    if (codeLines.length < rows) while (codeLines.length < rows) { const l = newLine(); l.typed = 99; codeLines.push(l); }
+    ctx.fillStyle = '#0d1017'; ctx.fillRect(0, 0, W, H);
+    // La ultima linea se va "tecleando"; cuando termina, todo sube una linea y aparece otra.
+    const lastLine = codeLines[codeLines.length - 1], total = lastLine.blocks.reduce((a, b) => a + b.w + 1, 0);
+    lastLine.typed += 1.6;
+    if (lastLine.typed > total + 4) { codeScroll += lh; codeLines.push(newLine()); }
+    if (codeScroll > 0) { const step = Math.min(codeScroll, lh * 0.25); codeScroll -= step; if (codeScroll <= 0.01) { codeScroll = 0; codeLines.shift(); } }
+    const y0 = H - (codeLines.length - 1) * lh - lh * 1.2 + codeScroll;
+    for (let i = 0; i < codeLines.length; i++) {
+      const l = codeLines[i], y = y0 + i * lh; if (y < -lh || y > H) continue;
+      ctx.fillStyle = 'rgba(120, 130, 160, 0.35)'; ctx.fillRect(size * 0.9, y + lh * 0.25, ch * 1.6, lh * 0.34); // numero de linea
+      let x = size * 3.4 + l.indent * ch, left = l.typed;
+      for (const b of l.blocks) {
+        if (left <= 0) break;
+        const w = Math.min(b.w, left) * ch; left -= b.w + 1;
+        ctx.fillStyle = b.c; ctx.globalAlpha = 0.5; ctx.fillRect(x, y + lh * 0.22, w, lh * 0.4); ctx.globalAlpha = 1;
+        x += (b.w + 1) * ch;
+      }
+      if (i === codeLines.length - 1 && (Date.now() >> 8) % 2) { ctx.fillStyle = '#c0caf5'; ctx.fillRect(x, y + lh * 0.15, ch * 0.5, lh * 0.55); } // cursor
+    }
   };
   window.addEventListener('resize', () => { if (current) resize(); });
   return {
