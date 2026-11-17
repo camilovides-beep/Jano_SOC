@@ -10,6 +10,7 @@ import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
+import { MusicService, MusicState } from '../music/music.service';
 import { MemoryService } from '../memory/memory.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { ToolsService } from '../tools/tools.service';
@@ -56,6 +57,7 @@ interface Session {
   notes: { text: string; card?: unknown; slug?: string }[]; // avisos del taller pendientes de contar
   noteTimer?: NodeJS.Timeout;
   startedAt: number;
+  music?: MusicState;    // musica de fondo (solo dueño)
   lastTurnEnd: number;   // cuando termino el ultimo turno (para no interrumpir con el estado del taller)
   lastStatus: number;    // ultima vez que se conto en voz como va el taller
 }
@@ -84,6 +86,7 @@ const FILLERS: Record<string, string> = {
   estado_taller: 'Déjame ver cómo va el taller.',
   cancelar_encargo: 'Ya lo detengo.',
   mostrar_proyecto: 'Ya te lo muestro.',
+  musica: 'Va.',
 };
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
@@ -130,6 +133,14 @@ TALLER DE PROGRAMACIÓN: puedes encargarle trabajos de programación a Claude Co
 - Para cambios ("ponle otro color", "agrega precios") vuelve a llamar a programar con el mismo proyecto.
 - Solo hay un encargo a la vez. Usa estado_taller si pregunta cómo va, cancelar_encargo si pide detenerlo y mostrar_proyecto para volver a mostrar un código QR.`;
 
+/** Musica de fondo. Va solo en sesiones del dueño y si hay clave de YouTube. */
+const MUSIC_RULES = (def: string, taller: boolean) => `
+
+MÚSICA: con la herramienta musica puedes poner música de YouTube de fondo en la pantalla de Javier (suena bajito y baja sola cuando alguien habla).
+${taller ? '- Cuando acabes de iniciar un encargo de programación (y no haya música sonando), pregúntale en la misma respuesta: "¿Quieres escuchar alguna canción mientras tanto?".\n' : ''}- Si dice una canción, artista o género, ponla. Si dice "lo que sea", "pon algo" o algo parecido, pon "${def}". Si dice que no, no insistas.
+- También puede pedir música en cualquier momento, aunque no esté programando. Obedece sus órdenes de volumen, pausa, siguiente, cambio de canción y "qué suena".
+- Al confirmar, una frase corta; no leas títulos largos ni enlaces.`;
+
 /**
  * WebSocket del navegador.
  *  cliente -> JSON { type: 'hello', code? } | { type: 'playback', playing } ; binario: PCM16 mono 16 kHz del microfono
@@ -149,7 +160,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
-    private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService,
+    private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -217,6 +228,8 @@ export class SessionGateway implements OnGatewayConnection {
         clearTimeout(authTimer); this.start(client, s);
         return;
       }
+      // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
+      if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
     });
     client.on('close', () => { clearTimeout(authTimer); this.end(s); });
@@ -225,6 +238,7 @@ export class SessionGateway implements OnGatewayConnection {
 
   private start(client: WebSocket, s: Session) {
     s.ready = true; this.active++;
+    if (s.owner && !s.callerPhone && this.music.enabled) s.music = this.music.newState();
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
     const known = s.visitor ? this.memory.get(s.visitor) : null;
     const cardIds = this.cards.ids();
@@ -238,7 +252,7 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
@@ -247,8 +261,12 @@ export class SessionGateway implements OnGatewayConnection {
     // Limites: duracion maxima de la sesion e inactividad.
     s.startedAt = Date.now();
     s.timers.push(setInterval(() => {
-      const working = s.owner && !!this.workshop.busy(); // con un encargo en curso la sesion del dueño sigue abierta para ir contandole
-      if (working) this.workshopStatus(client, s);
+      const job = s.owner && !!this.workshop.busy(); // con un encargo en curso la sesion del dueño sigue abierta para ir contandole
+      if (job) this.workshopStatus(client, s);
+      // Con musica sonando la sesion tambien sigue abierta (para obedecer "subele" o "quitala"), hasta MUSIC_MAX_MINUTES.
+      const listening = !!s.music?.playing && Date.now() - s.music.since < this.cfg.musicMaxMinutes * 60_000;
+      if (listening) s.lastActivity = Date.now();
+      const working = job || listening;
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
@@ -415,13 +433,14 @@ export class SessionGateway implements OnGatewayConnection {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin });
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin, music: s.music });
             result = out.text;
             if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++;
             // Efectos que dependen del dato consultado: fondo del clima, billetes del dolar.
             if (out.scene && !turn.ctrl.signal.aborted) { turn.sceneLocked = true; this.send(client, { type: 'scene', name: out.scene }); }
             if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
             if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
+            if (out.music) this.send(client, { type: 'music', ...out.music });
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });

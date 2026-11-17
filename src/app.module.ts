@@ -17,6 +17,7 @@ import { KnowledgeService } from './knowledge/knowledge.service';
 import { KnowledgeController } from './knowledge/knowledge.controller';
 import { N8nController } from './n8n/n8n.controller';
 import { WorkshopService } from './workshop/workshop.service';
+import { MusicService } from './music/music.service';
 import { SitesController } from './workshop/sites.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { MemoryService } from './memory/memory.service';
@@ -30,6 +31,6 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, WorkshopService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
+  providers: [ConfigService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

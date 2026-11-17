@@ -60,6 +60,12 @@ export class ConfigService {
   readonly tallerNice: number;
   /** Cada cuantos segundos el avatar cuenta en voz como va el encargo (0 = no lo cuenta solo). */
   readonly tallerStatusSeconds: number;
+  /** Musica de YouTube en modo dueño. Sin clave = sin musica. */
+  readonly youtubeApiKey: string;
+  readonly musicDefaultQuery: string;
+  readonly musicVolume: number;
+  readonly musicDailySearches: number;
+  readonly musicMaxMinutes: number;
   /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
   readonly publicUrl: string;
   readonly callMode: string;
@@ -150,6 +156,11 @@ export class ConfigService {
     this.tallerMaxTurns = int('TALLER_MAX_TURNS', 200, 1);
     this.tallerMaxProjects = int('TALLER_MAX_PROJECTS', 50, 1);
     this.tallerNice = int('TALLER_NICE', 10, 0);
+    this.youtubeApiKey = str('YOUTUBE_API_KEY');
+    this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
+    this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));
+    this.musicDailySearches = int('MUSIC_DAILY_SEARCHES', 80, 1);
+    this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     this.callPublicIp = str('CALL_PUBLIC_IP');

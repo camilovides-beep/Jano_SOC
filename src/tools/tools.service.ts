@@ -3,11 +3,12 @@ import { ConfigService } from '../config/config.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
+import { MusicService, MusicState } from '../music/music.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
-export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; }
+export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>; }
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
-export interface ToolContext { origin: string; }
+export interface ToolContext { origin: string; music?: MusicState; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
@@ -46,7 +47,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -142,6 +143,49 @@ export class ToolsService {
           if (!rows.length) return 'Todavía no hay interesados registrados.';
           return rows.map((l) => `#${l.id} ${l.created_at.slice(0, 10)} | ${l.name}${l.company ? ' (' + l.company + ')' : ''} | ${l.contact} | ${l.interest} | ${l.status} | ${l.detail}`).join('\n');
         },
+      },
+    };
+    // Musica de fondo de YouTube: el servidor busca y lleva la cola; el navegador la reproduce en un mini reproductor.
+    if (music.enabled) this.ownerTools.musica = {
+      description:
+        'Controla la música de fondo (YouTube) que suena en la pantalla de Javier. Úsala cuando pida poner una canción, artista o género, ' +
+        'cambiarla, pausarla, quitarla, pasar a la siguiente, subir o bajar el volumen, o cuando pregunte qué está sonando.',
+      parameters: {
+        type: 'object',
+        properties: {
+          accion: { type: 'string', enum: ['poner', 'pausar', 'continuar', 'quitar', 'siguiente', 'anterior', 'volumen', 'que_suena'], description: 'Qué hacer.' },
+          busqueda: { type: 'string', description: `Para "poner": canción, artista o género tal como lo dijo Javier. Si dijo "lo que sea" o no dijo nada concreto, usa "${cfg.musicDefaultQuery}".` },
+          volumen: { type: 'string', description: 'Para "volumen": "subir", "bajar" o un número de 0 a 100.' },
+        },
+        required: ['accion'],
+      },
+      run: async (args: Record<string, unknown>, ctx: ToolContext) => {
+        const m = ctx.music; if (!m) return 'La música no está disponible en esta sesión.';
+        const now = () => m.queue[m.index], name = (t = now()) => (t ? `"${t.title}" del canal ${t.channel}` : 'nada');
+        const play = (text: string): ToolResult => { m.playing = true; m.since ||= Date.now(); return { text, music: { action: 'play', queue: m.queue, index: m.index, volume: m.volume } }; };
+        switch (String(args.accion)) {
+          case 'poner': {
+            const tracks = await music.search(String(args.busqueda || cfg.musicDefaultQuery));
+            if (!tracks.length) return 'No encontré música con esa búsqueda. Pídele otra forma de decirlo.';
+            m.queue = tracks; m.index = 0;
+            return play(`Suena ${name()} a volumen ${m.volume} por ciento. Hay ${tracks.length - 1} más en cola. Dilo en una frase corta, sin leer el título completo si es largo.`);
+          }
+          case 'siguiente': case 'anterior': {
+            if (!m.queue.length) return 'No hay música puesta. Pregúntale qué quiere escuchar.';
+            m.index = (m.index + (args.accion === 'siguiente' ? 1 : m.queue.length - 1)) % m.queue.length;
+            return play(`Ahora suena ${name()}.`);
+          }
+          case 'pausar': if (!m.playing) return 'No hay música sonando.'; m.playing = false; return { text: 'Música en pausa.', music: { action: 'pause' } };
+          case 'continuar': if (!m.queue.length) return 'No hay música puesta.'; m.playing = true; m.since ||= Date.now(); return { text: `Sigue sonando ${name()}.`, music: { action: 'resume' } };
+          case 'quitar': m.playing = false; m.queue = []; m.index = 0; m.since = 0; return { text: 'Música quitada.', music: { action: 'stop' } };
+          case 'volumen': {
+            const v = String(args.volumen ?? '').toLowerCase(), n = Number(v.replace(/[^0-9.]/g, ''));
+            m.volume = Math.round(Math.max(0, Math.min(100, v.includes('sub') ? m.volume + 15 : v.includes('baj') ? m.volume - 10 : Number.isFinite(n) && /\d/.test(v) ? n : m.volume)));
+            return { text: `Volumen de la música en ${m.volume} por ciento.`, music: { action: 'volume', volume: m.volume } };
+          }
+          case 'que_suena': return m.playing ? `Suena ${name()}, a volumen ${m.volume} por ciento.` : m.queue.length ? `Está en pausa ${name()}.` : 'No hay música puesta.';
+          default: return 'Acción de música desconocida.';
+        }
       },
     };
     // Taller de programacion: Claude Code con la suscripcion de Javier. Solo existe en modo dueño y si hay token.

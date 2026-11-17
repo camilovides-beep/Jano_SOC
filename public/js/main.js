@@ -4,6 +4,7 @@ import { LipSync, VISEMES } from './lipsync.js';
 import { startMic } from './mic.js';
 import { connect } from './socket.js';
 import { createBackdrop, emojiBurst } from './fx.js';
+import { createMusic } from './music.js';
 
 const $ = (id) => document.getElementById(id);
 const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando' };
@@ -21,6 +22,16 @@ if (missing.length) console.warn('Al modelo le faltan morph targets:', missing);
 if (new URLSearchParams(location.search).get('subs') === '0') $('subtitles').classList.add('off'); // subtitulos opcionales: ?subs=0
 
 const lips = new LipSync();
+// Musica de fondo (modo dueño): el servidor manda la cola; aqui suena en el mini reproductor y baja cuando alguien habla.
+const music = createMusic($('music'), (st) => socket?.send({ type: 'music', ...st }));
+let duckUntil = 0;
+function onMusic(msg) {
+  if (msg.action === 'play') music.play(msg.queue, msg.index, msg.volume);
+  else if (msg.action === 'pause') music.pause();
+  else if (msg.action === 'resume') music.resume();
+  else if (msg.action === 'stop') music.stop();
+  else if (msg.action === 'volume') music.setVolume(msg.volume);
+}
 // Taller de programacion (modo dueño): mientras Claude Code trabaja, el fondo es un editor, las gafas reflejan el
 // codigo y arriba se ve en que va. Los fondos que pide una respuesta mandan mientras el avatar habla.
 let work = null;
@@ -87,6 +98,7 @@ function onMessage(msg) {
       break;
     case 'user_partial':
       if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
+      duckUntil = performance.now() + 2500; // la persona esta hablando: la musica baja un momento
       break;
     case 'user_final':
       $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; hideCard(); setState('thinking'); break;
@@ -107,6 +119,8 @@ function onMessage(msg) {
       backdrop.show(msg.name); break;
     case 'card':
       showCard(msg); break;
+    case 'music': // musica de fondo
+      onMusic(msg); break;
     case 'work': // progreso del taller de programacion
       setWork(msg); break;
     case 'interrupt': // el usuario hablo encima: se corta el audio y la boca vuelve a reposo
@@ -118,7 +132,7 @@ function onMessage(msg) {
 function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
-  setWork(null); stopSpeech(); backdrop.show(null); hideCard(); setState('idle');
+  setWork(null); music.stop(); stopSpeech(); backdrop.show(null); hideCard(); setState('idle');
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
   $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -180,12 +194,13 @@ function frame(now) {
     while (n < subChars.length && subChars[n].t <= t + 0.25) n++;
     if (n !== subShown) { subShown = n; $('sub-avatar').textContent = subChars.slice(0, n).map((x) => x.c).join(''); }
   }
+  if (music.active) music.duck(playing || state === 'speaking' || state === 'thinking' || now < duckUntil);
   avatar.update(dt);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork, music: onMusic,
   standby: () => { armed = true; shutdown(''); },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };
