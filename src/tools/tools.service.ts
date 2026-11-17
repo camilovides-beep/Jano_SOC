@@ -145,6 +145,42 @@ export class ToolsService {
         },
       },
     };
+    // Resumen del dia para Javier: junta lo que el avatar sabe sin que tenga que preguntarlo por partes.
+    this.ownerTools.resumen_del_dia = {
+      description:
+        'Arma el resumen del día de Javier: fecha y hora, clima, interesados nuevos, llamadas de WhatsApp que atendió el avatar y estado del taller de programación. ' +
+        'Úsala cuando salude por la mañana, pida el resumen, pregunte "qué hay de nuevo" o "cómo amanecimos".',
+      parameters: { type: 'object', properties: { desde_horas: { type: 'number', description: 'Cuántas horas hacia atrás mirar. Por defecto, desde el inicio del día de ayer.' } }, required: [] },
+      run: async (args: Record<string, unknown>, ctx: ToolContext) => {
+        const now = new Date(), day = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: cfg.timezone }).format(d);
+        const hours = Number(args.desde_horas);
+        // Por defecto: desde las 00:00 de ayer en la zona horaria de Javier.
+        const offset = Date.parse(now.toLocaleString('sv-SE', { timeZone: cfg.timezone }).replace(' ', 'T') + 'Z') - Math.floor(now.getTime() / 1000) * 1000; // diferencia de la zona con UTC
+        const since = hours > 0 ? new Date(now.getTime() - Math.min(hours, 24 * 14) * 3600_000)
+          : new Date(Date.parse(`${day(new Date(now.getTime() - 24 * 3600_000))}T00:00:00Z`) - offset);
+        const iso = since.toISOString(), when = (t: string) => new Intl.DateTimeFormat('es-CO', { timeZone: cfg.timezone, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(t));
+        const parts: string[] = [`Fecha y hora: ${new Intl.DateTimeFormat('es-CO', { timeZone: cfg.timezone, dateStyle: 'full', timeStyle: 'short' }).format(now)}.`];
+        let scene: string | undefined;
+        try { const w = await this.tools.clima.run({}, ctx); if (typeof w === 'string') parts.push(w); else { parts.push(w.text); scene = w.scene; } } catch { parts.push('Clima: no se pudo consultar.'); }
+        const leads = this.leads.leadsSince(iso);
+        parts.push(leads.length
+          ? `Interesados nuevos (${leads.length}): ` + leads.slice(0, 6).map((l) => `${l.name}${l.company ? ' de ' + l.company : ''}, ${l.interest.replace(/_/g, ' ')}, ${when(l.created_at)}${l.detail ? ': ' + l.detail.slice(0, 120) : ''}`).join(' | ')
+          : 'Interesados nuevos: ninguno.');
+        parts.push(`Interesados que siguen en estado "nuevo" (sin contactar): ${this.leads.countByStatus('nuevo')}.`);
+        const calls = this.leads.callsSince(iso);
+        parts.push(calls.length
+          ? `Llamadas de WhatsApp atendidas (${calls.length}): ` + calls.slice(0, 6).map((c) => `${c.who}, ${when(c.at)}, ${c.seconds} s${c.transcript ? ', dijo: ' + (c.transcript.split('\n').find((l) => l.startsWith('🧑')) ?? '').slice(2, 140) : ''}`).join(' | ')
+          : 'Llamadas de WhatsApp atendidas: ninguna registrada.');
+        if (workshop.enabled) {
+          const list = workshop.list(), pend = list.filter((p) => p.unseen), bad = list.filter((p) => p.status === 'error');
+          parts.push(`Taller de programación: ${workshop.busy() ? workshop.progress() : 'libre'}. ${list.length} proyectos` +
+            (pend.length ? `; terminaron sin que lo vieras: ${pend.map((p) => p.name).join(', ')}` : '') + (bad.length ? `; quedaron con error: ${bad.map((p) => p.name).join(', ')}` : '') + '.');
+        }
+        parts.push('Cuéntaselo en voz, en cuatro a seis frases, empezando por lo más importante (interesados y llamadas); no leas teléfonos ni listas largas. ' +
+          'Si no hubo nada nuevo, dilo en una frase. Al final ofrécele revisar sus tareas de Plane si tienes esas herramientas.');
+        return { text: parts.join('\n'), scene };
+      },
+    };
     // Musica de fondo de YouTube: el servidor busca y lleva la cola; el navegador la reproduce en un mini reproductor.
     if (music.enabled) this.ownerTools.musica = {
       description:

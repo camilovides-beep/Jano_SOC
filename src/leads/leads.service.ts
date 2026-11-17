@@ -39,7 +39,23 @@ export class LeadsService {
       status TEXT NOT NULL DEFAULT 'nuevo',
       notes TEXT NOT NULL DEFAULT ''
     )`);
+    // Llamadas de WhatsApp atendidas por el avatar (para el resumen del dia; la grabacion sigue yendo a Telegram).
+    this.db.exec(`CREATE TABLE IF NOT EXISTS calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, who TEXT NOT NULL, seconds INTEGER NOT NULL, turns INTEGER NOT NULL, transcript TEXT NOT NULL DEFAULT ''
+    )`);
   }
+
+  logCall(who: string, seconds: number, lines: string[]) {
+    try {
+      this.db.prepare('INSERT INTO calls (at, who, seconds, turns, transcript) VALUES (?, ?, ?, ?, ?)')
+        .run(new Date().toISOString(), clip(who, 120), Math.round(seconds), lines.filter((l) => l.startsWith('🧑')).length, lines.join('\n').slice(0, 8000));
+    } catch (e) { this.log.warn(`no se pudo registrar la llamada: ${(e as Error).message}`); }
+  }
+  callsSince(iso: string): { at: string; who: string; seconds: number; turns: number; transcript: string }[] {
+    return this.db.prepare('SELECT at, who, seconds, turns, transcript FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 30').all(iso) as any[];
+  }
+  leadsSince(iso: string): Lead[] { return this.db.prepare('SELECT * FROM leads WHERE created_at >= ? ORDER BY id DESC LIMIT 30').all(iso) as unknown as Lead[]; }
+  countByStatus(status: string): number { return Number((this.db.prepare('SELECT COUNT(*) AS n FROM leads WHERE status = ?').get(status) as any)?.n ?? 0); }
 
   add(input: NewLead): Lead {
     const lead = {

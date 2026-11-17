@@ -5,6 +5,7 @@ import { startMic } from './mic.js';
 import { connect } from './socket.js';
 import { createBackdrop, emojiBurst } from './fx.js';
 import { createMusic } from './music.js';
+import { BrowserVoice } from './browser-voice.js';
 
 const $ = (id) => document.getElementById(id);
 const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando' };
@@ -22,6 +23,12 @@ if (missing.length) console.warn('Al modelo le faltan morph targets:', missing);
 if (new URLSearchParams(location.search).get('subs') === '0') $('subtitles').classList.add('off'); // subtitulos opcionales: ?subs=0
 
 const lips = new LipSync();
+// Voz del navegador: se usa cuando el servidor avisa que no tiene voz propia (sin clave de ElevenLabs).
+const browserVoice = new BrowserVoice(
+  (chars, starts, ends) => { lips.add(chars, starts, ends); for (let i = 0; i < chars.length; i++) subChars.push({ c: chars[i], t: starts[i] }); },
+  (t) => { lips.cut(t); subChars = subChars.filter((x) => x.t < t); subShown = Math.min(subShown, subChars.length); },
+);
+let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenLabs)
 // Musica de fondo (modo dueño): el servidor manda la cola; aqui suena en el mini reproductor y baja cuando alguien habla.
 const music = createMusic($('music'), (st) => socket?.send({ type: 'music', ...st }));
 let duckUntil = 0;
@@ -89,6 +96,7 @@ function onMessage(msg) {
     case 'ready':
       live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
+      if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
       break;
     case 'error':
@@ -109,6 +117,11 @@ function onMessage(msg) {
       if (msg.align) { lips.add(msg.align.chars, msg.align.starts, msg.align.ends); for (let i = 0; i < msg.align.chars.length; i++) subChars.push({ c: msg.align.chars[i], t: msg.align.starts[i] }); }
       if (state !== 'speaking') { setState('speaking'); avatar.raiseBrows(); }
       player.push(base64ToBytes(msg.audio));
+      break;
+    case 'say': // frase para decir con la voz del navegador
+      if (msg.id !== speechId) break;
+      if (state !== 'speaking') { setState('speaking'); avatar.raiseBrows(); }
+      browserVoice.speak(msg.text, msg.lang);
       break;
     case 'speech_end':
       if (msg.id === speechId) player.end();
@@ -167,7 +180,7 @@ async function begin() {
     // El gesto del usuario habilita el audio y el microfono del navegador.
     audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.resume();
-    player ??= new SpeechPlayer(audioCtx);
+    serverPlayer ??= new SpeechPlayer(audioCtx); player ??= serverPlayer;
     if (!mic) mic = await startMic(audioCtx, onMicChunk);
     armed = true; retryAt = 0;
     startSession();
@@ -200,7 +213,7 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork, music: onMusic,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork, music: onMusic, message: onMessage,
   standby: () => { armed = true; shutdown(''); },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

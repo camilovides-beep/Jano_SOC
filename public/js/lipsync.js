@@ -29,6 +29,8 @@ export class LipSync {
       this.events.push({ t0: starts[i], t1: ends[i], v });
     }
   }
+  /** Descarta lo que aun no ha sonado desde t (cuando llegan tiempos mejores que los estimados). */
+  cut(t) { this.events = this.events.filter((e) => e.t0 < t); this.cursor = Math.min(this.cursor, Math.max(0, this.events.length - 1)); }
   /** Avanza la boca: t = tiempo real de reproduccion; dt = segundos desde el cuadro anterior. Devuelve los pesos. */
   update(t, dt) {
     let target = 'rest';

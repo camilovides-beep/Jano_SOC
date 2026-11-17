@@ -58,6 +58,9 @@ interface Session {
   noteTimer?: NodeJS.Timeout;
   startedAt: number;
   music?: MusicState;    // musica de fondo (solo dueño)
+  browserTts: boolean;   // habla el navegador (sin clave de ElevenLabs): se envia el texto, no el audio
+  lastPlayEnd: number;   // cuando el navegador termino de reproducir la ultima respuesta
+  lastSpoken: string;    // lo ultimo que dijo el avatar (para reconocer su propio eco con la voz del navegador)
   lastTurnEnd: number;   // cuando termino el ultimo turno (para no interrumpir con el estado del taller)
   lastStatus: number;    // ultima vez que se conto en voz como va el taller
 }
@@ -87,6 +90,7 @@ const FILLERS: Record<string, string> = {
   cancelar_encargo: 'Ya lo detengo.',
   mostrar_proyecto: 'Ya te lo muestro.',
   musica: 'Va.',
+  resumen_del_dia: 'Déjame revisar qué hay de nuevo.',
 };
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
@@ -213,7 +217,7 @@ export class SessionGateway implements OnGatewayConnection {
     const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0,
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0, browserTts: this.cfg.ttsProvider === 'browser' && !internal, lastSpoken: '', lastPlayEnd: 0,
       origin: req?.headers?.host ? `${String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${req.headers.host}` : '' };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
@@ -230,6 +234,7 @@ export class SessionGateway implements OnGatewayConnection {
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
+      if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
     });
     client.on('close', () => { clearTimeout(authTimer); this.end(s); });
@@ -270,8 +275,8 @@ export class SessionGateway implements OnGatewayConnection {
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
-    this.send(client, { type: 'ready', owner: s.owner });
-    const greeting = s.owner ? 'Hola Javier, aquí estoy. ¿Qué revisamos?' : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
+    this.send(client, { type: 'ready', owner: s.owner, tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate });
+    const greeting = s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
@@ -284,6 +289,17 @@ export class SessionGateway implements OnGatewayConnection {
       // Encargos que terminaron cuando no habia una sesion abierta: se cuentan despues del saludo.
       for (const p of this.workshop.unseen()) void this.workshopNote(client, s, p.slug);
     }
+  }
+
+  /** Saludo del dueño segun la hora; en la primera sesion de cada dia ofrece el resumen. */
+  private lastOwnerDay = '';
+  private ownerGreeting(): string {
+    const now = new Date();
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: this.cfg.timezone, hour: '2-digit', hour12: false }).format(now));
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(now);
+    const hello = hour >= 5 && hour < 12 ? 'Buenos días' : hour >= 12 && hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+    if (day !== this.lastOwnerDay) { this.lastOwnerDay = day; return `${hello}, Javier. ¿Te cuento el resumen de hoy?`; }
+    return `${hello}, Javier, aquí estoy. ¿Qué revisamos?`;
   }
 
   private end(s: Session) {
@@ -305,7 +321,7 @@ export class SessionGateway implements OnGatewayConnection {
       const busy = !!s.turn || s.clientPlaying;
       if (busy) {
         // El avatar esta respondiendo. Solo se interrumpe si se reconocen varias palabras (evita cortes por eco o ruido).
-        if (words(current) >= this.cfg.bargeInWords) this.interrupt(client, s);
+        if (words(current) >= this.cfg.bargeInWords && !this.isEcho(s, current)) this.interrupt(client, s);
       }
       if (!(s.turn || s.clientPlaying)) {
         this.send(client, { type: 'user_partial', text: current });
@@ -324,7 +340,21 @@ export class SessionGateway implements OnGatewayConnection {
     s.finals = []; s.langs = []; clearTimeout(s.specTimer);
     if (!text) return;
     if (s.turn || s.clientPlaying) return; // palabras sueltas mientras el avatar habla: se descartan
+    if (this.isEcho(s, text) && Date.now() - Math.max(s.lastTurnEnd, s.lastPlayEnd) < 6000) return; // el microfono oyo la cola de la voz del navegador
     void this.respond(client, s, text, lang);
+  }
+
+  /**
+   * Con la voz del navegador el cancelador de eco no siempre quita lo que dice el avatar: si casi todas las palabras
+   * reconocidas estan en lo que el avatar esta diciendo (o acaba de decir), es su propio eco y no una interrupcion.
+   */
+  private isEcho(s: Session, heard: string): boolean {
+    if (!s.browserTts) return false;
+    const wordsOf = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9ñ]+/).filter(Boolean);
+    const spoken = new Set(wordsOf(`${s.turn?.spoken ?? ''} ${s.lastSpoken}`));
+    const list = wordsOf(heard);
+    if (!list.length || !spoken.size) return false;
+    return list.filter((w) => spoken.has(w)).length / list.length >= 0.7;
   }
 
   private interrupt(client: WebSocket, s: Session) {
@@ -484,6 +514,10 @@ export class SessionGateway implements OnGatewayConnection {
     if (!text || turn.ctrl.signal.aborted) return;
     const first = !turn.spoken;
     turn.spoken += (turn.spoken ? ' ' : '') + text;
+    if (s.browserTts) { // habla el navegador: va el texto y el lo dice con su propia voz
+      turn.chain = turn.chain.then(() => { if (turn.ctrl.signal.aborted) return; turn.tAudio ??= Date.now(); this.send(client, { type: 'say', id: turn.id, text, lang: turn.lang }); });
+      return;
+    }
     const buf: TtsChunk[] = [];
     let spaced = first; // entre frases se agrega un espacio para los subtitulos
     let done = false, wake: (() => void) | undefined;
@@ -525,7 +559,7 @@ export class SessionGateway implements OnGatewayConnection {
     if (!aborted) this.send(client, { type: 'speech_end', id: turn.id });
     if (turn.spoken) s.history.push({ role: 'assistant', content: (turn.tags ? turn.tags + ' ' : '') + turn.spoken });
     if (s.turn === turn) s.turn = undefined;
-    s.lastTurnEnd = Date.now();
+    s.lastTurnEnd = Date.now(); if (turn.spoken) s.lastSpoken = turn.spoken;
     const ms = (t?: number) => (t ? `${t - turn.t0} ms` : 'n/d');
     this.log.log(`sesion #${s.n} ${kind} #${turn.id}${aborted ? ' (interrumpido)' : ''}: primer token LLM ${ms(turn.tLlm)}, primer audio ${ms(turn.tAudio)}, audio ${(turn.samples / TTS_SAMPLE_RATE).toFixed(1)} s`);
   }

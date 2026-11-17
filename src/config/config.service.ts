@@ -9,6 +9,10 @@ export class ConfigService {
   readonly accessCode: string;
   readonly elevenApiKey: string;
   readonly elevenVoiceId: string;
+  /** Voz: 'elevenlabs' (audio desde el servidor) o 'browser' (la voz del navegador). Sin clave de ElevenLabs es 'browser'. */
+  readonly ttsProvider: 'elevenlabs' | 'browser';
+  readonly browserVoice: string;
+  readonly browserVoiceRate: number;
   readonly elevenModelId: string;
   readonly deepgramApiKey: string;
   readonly deepgramModel: string;
@@ -111,8 +115,15 @@ export class ConfigService {
     };
     this.port = int('PORT', 3000, 1);
     this.accessCode = str('ACCESS_CODE');
-    this.elevenApiKey = required('ELEVENLABS_API_KEY');
-    this.elevenVoiceId = required('ELEVENLABS_VOICE_ID');
+    this.elevenApiKey = str('ELEVENLABS_API_KEY');
+    this.elevenVoiceId = str('ELEVENLABS_VOICE_ID');
+    // Sin clave (o sin voz) de ElevenLabs habla el navegador; TTS_PROVIDER=browser lo fuerza aunque haya clave.
+    const wanted = str('TTS_PROVIDER').toLowerCase();
+    if (wanted && wanted !== 'browser' && wanted !== 'elevenlabs') throw new Error('TTS_PROVIDER debe ser elevenlabs o browser');
+    if (wanted === 'elevenlabs' && !(this.elevenApiKey && this.elevenVoiceId)) throw new Error('TTS_PROVIDER=elevenlabs necesita ELEVENLABS_API_KEY y ELEVENLABS_VOICE_ID');
+    this.ttsProvider = wanted === 'browser' || !(this.elevenApiKey && this.elevenVoiceId) ? 'browser' : 'elevenlabs';
+    this.browserVoice = str('BROWSER_VOICE');
+    this.browserVoiceRate = Number(str('BROWSER_VOICE_RATE', '1')) || 1;
     this.elevenModelId = str('ELEVENLABS_MODEL_ID', 'eleven_v4_turbo');
     this.deepgramApiKey = required('DEEPGRAM_API_KEY');
     this.deepgramModel = str('DEEPGRAM_MODEL', 'nova-3');
@@ -163,6 +174,8 @@ export class ConfigService {
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
+    // Una llamada de WhatsApp no tiene navegador: sin voz del servidor no se puede atender.
+    if (this.ttsProvider === 'browser' && this.callMode === 'conversar') this.callMode = 'rechazar';
     this.callPublicIp = str('CALL_PUBLIC_IP');
     this.callPortMin = int('CALL_UDP_PORT_MIN', 40000, 1024);
     this.callPortMax = int('CALL_UDP_PORT_MAX', 40009, 1024);

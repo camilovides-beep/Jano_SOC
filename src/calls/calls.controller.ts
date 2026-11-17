@@ -143,6 +143,7 @@ export class CallsController {
     const st = media.stats;
     const head = `📞 Llamada con el avatar — ${log.who}\n⏱ ${secs} s · audio recibido ${st.seconds.toFixed(0)} s · ICE: ${st.iceLog.join(' → ') || st.ice}`;
     const body = log.lines.length ? log.lines.join('\n') : '(no hubo conversación reconocida)';
+    this.leads.logCall(log.who, secs, log.lines);
     const err = await this.leads.telegramLong(`${head}\n\n${body}`);
     if (err) this.log.warn(`transcripcion de ${id}: ${err}`);
     const wav = media.recording();

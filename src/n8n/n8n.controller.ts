@@ -94,6 +94,7 @@ export class N8nController {
     const text = String(body?.text ?? '').trim().slice(0, 2500);
     if (to.length < 8 || to.length > 15 || !text) throw new HttpException('faltan to o text', 400);
     if (!this.cfg.whatsappToken || !this.cfg.whatsappPhoneNumberId) throw new HttpException('WhatsApp no está configurado', 503);
+    if (!this.cfg.elevenApiKey || !this.cfg.elevenVoiceId) throw new HttpException('no hay voz configurada (ElevenLabs)', 503);
     const t0 = Date.now();
 
     const tts = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${this.cfg.elevenVoiceId}?output_format=opus_48000_32`, {
