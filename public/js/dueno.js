@@ -20,6 +20,7 @@ async function refresh() {
     li.append(info, btn); return li;
   }));
   loadLeads();
+  loadProjects();
 }
 
 async function loadLeads() {
@@ -44,6 +45,34 @@ async function loadLeads() {
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`leads/${l.id}`, { method: 'DELETE' }); loadLeads(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     row.append(sel, del); li.append(head, contact, detail, row, notes); return li;
   }));
+}
+
+// Proyectos del taller (Claude Code): estado, ultimo informe, enlace, QR y descarga.
+let projectTimer = null;
+async function loadProjects() {
+  const res = await api('projects'); if (!res.ok) return;
+  const { enabled, busy, progress, projects } = await res.json();
+  $('projects').hidden = !enabled; if (!enabled) return;
+  $('project-count').textContent = `(${projects.length})`;
+  $('project-progress').textContent = progress;
+  $('project-list').replaceChildren(...projects.map((p) => {
+    const li = document.createElement('li'); li.className = 'lead';
+    const head = document.createElement('div'); head.className = 'row';
+    const name = document.createElement('strong'); name.textContent = p.name;
+    const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = p.status;
+    head.append(name, tag);
+    const task = document.createElement('small'); task.textContent = `${fecha(p.updatedAt)} — encargo: ${p.lastTask || 'ninguno'}`;
+    const sum = document.createElement('div'); sum.textContent = p.lastSummary || 'Sin resultado todavía.'; sum.style.whiteSpace = 'pre-wrap';
+    const row = document.createElement('div'); row.className = 'row';
+    if (p.url) { const a = document.createElement('a'); a.href = p.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Abrir sitio'; row.append(a); }
+    const dl = document.createElement('a'); dl.href = `./owner/projects/${p.slug}/descargar`; dl.textContent = 'Descargar código'; row.append(dl);
+    li.append(head, task, sum, row);
+    if (p.qr) { const img = document.createElement('img'); img.src = p.qr; img.alt = `Código QR de ${p.name}`; img.width = 160; img.height = 160; li.append(img); }
+    const files = document.createElement('details'), fs = document.createElement('summary'), pre = document.createElement('pre');
+    fs.textContent = `Archivos (${p.files.length})`; pre.textContent = p.files.join('\n'); files.append(fs, pre); li.append(files);
+    return li;
+  }));
+  clearTimeout(projectTimer); if (busy) projectTimer = setTimeout(loadProjects, 5000); // mientras trabaja, se actualiza solo
 }
 
 $('form').addEventListener('submit', async (ev) => {

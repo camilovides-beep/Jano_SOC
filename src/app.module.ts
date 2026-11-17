@@ -16,6 +16,8 @@ import { CallsController } from './calls/calls.controller';
 import { KnowledgeService } from './knowledge/knowledge.service';
 import { KnowledgeController } from './knowledge/knowledge.controller';
 import { N8nController } from './n8n/n8n.controller';
+import { WorkshopService } from './workshop/workshop.service';
+import { SitesController } from './workshop/sites.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
@@ -24,10 +26,10 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}'],
+      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/p/{*path}', '/formulario'],
     }),
   ],
-  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController],
-  providers: [ConfigService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
+  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
+  providers: [ConfigService, WorkshopService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

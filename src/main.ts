@@ -3,6 +3,10 @@ import { existsSync } from 'node:fs';
 // En local las claves vienen de .env; en produccion, del entorno del contenedor.
 if (existsSync('.env')) process.loadEnvFile('.env');
 
+// Los archivos que crea el avatar (interesados, dispositivos, grabaciones) son solo para su usuario: el taller de
+// programacion corre como otro usuario del sistema y no debe poder leerlos.
+process.umask(0o077);
+
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';

@@ -48,6 +48,18 @@ export class ConfigService {
   /** n8n: webhook al que se reenvian los mensajes de WhatsApp y secreto compartido (cabecera X-Forward-Secret). */
   readonly n8nWebhookUrl: string;
   readonly n8nSecret: string;
+  /** Taller de programacion (solo modo dueño): Claude Code con la suscripcion de Javier. Sin token = desactivado. */
+  readonly claudeToken: string;
+  readonly claudeBin: string;
+  readonly claudeModel: string;
+  /** Usuario del sistema con el que corre Claude Code (via sudo). Vacio = el mismo usuario del avatar (solo para local). */
+  readonly tallerUser: string;
+  readonly tallerMaxMinutes: number;
+  readonly tallerMaxTurns: number;
+  readonly tallerMaxProjects: number;
+  readonly tallerNice: number;
+  /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
+  readonly publicUrl: string;
   readonly callMode: string;
   readonly callPublicIp: string;
   readonly callPortMin: number;
@@ -127,6 +139,15 @@ export class ConfigService {
     this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
     this.n8nWebhookUrl = str('N8N_WEBHOOK_URL');
     this.n8nSecret = str('N8N_SECRET');
+    this.claudeToken = str('CLAUDE_CODE_OAUTH_TOKEN');
+    this.claudeBin = str('CLAUDE_BIN', 'claude');
+    this.claudeModel = str('CLAUDE_MODEL');
+    this.tallerUser = str('TALLER_USER');
+    this.tallerMaxMinutes = int('TALLER_MAX_MINUTES', 20, 1);
+    this.tallerMaxTurns = int('TALLER_MAX_TURNS', 120, 1);
+    this.tallerMaxProjects = int('TALLER_MAX_PROJECTS', 50, 1);
+    this.tallerNice = int('TALLER_NICE', 10, 0);
+    this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     this.callPublicIp = str('CALL_PUBLIC_IP');
     this.callPortMin = int('CALL_UDP_PORT_MIN', 40000, 1024);

@@ -22,6 +22,14 @@ COPY content ./content
 COPY package.json ./
 # Lista de dispositivos del dueño. Montar un volumen en /app/data para que sobreviva a los despliegues.
 RUN mkdir -p /app/data && chown node:node /app/data
+# Taller de programacion: Claude Code corre como el usuario "taller" (no como el avatar), para que los comandos que
+# ejecute no puedan leer las claves ni los datos del avatar. sudo solo permite al avatar lanzar `claude` como ese usuario.
+# umask 0022 para el taller: el avatar crea sus archivos privados (umask 077) pero debe poder leer los sitios que publica.
+RUN apk add --no-cache bash git sudo \
+ && npm install -g @anthropic-ai/claude-code@2.1.326 && npm cache clean --force \
+ && adduser -D -s /bin/bash taller \
+ && printf '%s\n' 'Defaults:node umask=0022, umask_override, !lecture' 'node ALL=(taller) NOPASSWD:SETENV: /usr/local/bin/claude' > /etc/sudoers.d/taller && chmod 440 /etc/sudoers.d/taller
+ENV TALLER_USER=taller CLAUDE_BIN=/usr/local/bin/claude
 USER node
 EXPOSE 3000
 # Audio de las llamadas de WhatsApp (WebRTC). Publicar el mismo rango en Easypanel y abrirlo en el firewall.

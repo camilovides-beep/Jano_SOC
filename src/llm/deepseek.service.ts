@@ -22,13 +22,13 @@ export class DeepSeekService {
     return out;
   }
 
-  async *chat(messages: unknown[], tools: unknown[], signal?: AbortSignal): AsyncGenerator<LlmEvent> {
+  async *chat(messages: unknown[], tools: unknown[], signal?: AbortSignal, maxTokens = 400): AsyncGenerator<LlmEvent> {
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.cfg.deepseekApiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: this.cfg.deepseekModel, messages, stream: true, thinking: { type: 'disabled' },
-        max_tokens: 400, ...(tools.length ? { tools } : {}),
+        max_tokens: maxTokens, ...(tools.length ? { tools } : {}),
       }),
       signal,
     });

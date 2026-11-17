@@ -2,13 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
+import { WorkshopService } from '../workshop/workshop.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
-export interface ToolResult { text: string; scene?: string; reaction?: string; }
+export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; }
+/** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
+export interface ToolContext { origin: string; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
-  run(args: Record<string, unknown>): Promise<string | ToolResult> | string | ToolResult;
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolResult> | string | ToolResult;
 }
 
 /** Fondo segun el codigo de tiempo (OMM) y si es de dia. */
@@ -43,7 +46,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -141,6 +144,52 @@ export class ToolsService {
         },
       },
     };
+    // Taller de programacion: Claude Code con la suscripcion de Javier. Solo existe en modo dueño y si hay token.
+    if (workshop.enabled) Object.assign(this.ownerTools, {
+      programar: {
+        description:
+          'Le pasa un encargo de programación a Claude Code, que trabaja en segundo plano en un proyecto (carpeta propia) y puede tardar varios minutos. ' +
+          'Úsala cuando Javier pida crear o cambiar algo de programación: una landing, una página, un script, una app. ' +
+          'Para seguir un proyecto que ya existe usa su mismo nombre: Claude Code recuerda lo anterior.',
+        parameters: {
+          type: 'object',
+          properties: {
+            proyecto: { type: 'string', description: 'Nombre corto del proyecto, por ejemplo "landing café". Si es uno existente, el mismo nombre.' },
+            encargo: { type: 'string', description: 'Qué debe hacer, con TODOS los detalles que dio Javier (producto, público, textos, colores, qué acción debe hacer el visitante). Claude Code no oye la conversación: solo lee esto.' },
+            nuevo: { type: 'boolean', description: 'true si es un proyecto nuevo; false u omitido si continúa uno existente.' },
+          },
+          required: ['proyecto', 'encargo'],
+        },
+        run: (args: Record<string, unknown>, ctx: ToolContext) => {
+          const existing = workshop.find(String(args.proyecto ?? ''));
+          return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0);
+        },
+      },
+      estado_taller: {
+        description: 'Dice en qué va el encargo de programación en curso y lista los proyectos del taller con su último resultado. Úsala cuando Javier pregunte cómo va, qué proyectos hay o qué pasó con uno.',
+        parameters: { type: 'object', properties: {}, required: [] },
+        run: (_args: Record<string, unknown>, ctx: ToolContext) => {
+          const rows = workshop.list().slice(0, 12).map((p) => `- ${p.name} [${p.status}]${workshop.hasSite(p.slug) ? ' sitio: ' + workshop.siteUrl(p.slug, ctx.origin) : ''} | último encargo: ${(p.lastTask ?? '').slice(0, 100)} | resultado: ${(p.lastSummary ?? 'sin resultado').slice(0, 300)}`);
+          return `${workshop.progress()}\nProyectos (${workshop.list().length}):\n${rows.join('\n') || 'ninguno todavía'}`;
+        },
+      },
+      cancelar_encargo: {
+        description: 'Cancela el encargo de programación que está en curso. Úsala solo si Javier pide detenerlo.',
+        parameters: { type: 'object', properties: {}, required: [] },
+        run: () => workshop.cancel(),
+      },
+      mostrar_proyecto: {
+        description: 'Muestra en pantalla el código QR y el enlace del sitio publicado de un proyecto. Úsala cuando Javier pida ver, abrir o compartir un proyecto.',
+        parameters: { type: 'object', properties: { proyecto: { type: 'string', description: 'Nombre del proyecto.' } }, required: ['proyecto'] },
+        run: async (args: Record<string, unknown>, ctx: ToolContext) => {
+          const p = workshop.find(String(args.proyecto ?? ''));
+          if (!p) return `No existe un proyecto parecido. Proyectos: ${workshop.list().map((x) => x.name).join(', ') || 'ninguno'}.`;
+          const card = await workshop.card(p.slug, ctx.origin);
+          if (!card) return `El proyecto "${p.name}" no tiene un sitio publicado (no hay carpeta sitio con index.html). Último resultado: ${(p.lastSummary ?? 'ninguno').slice(0, 300)}`;
+          return { text: `En pantalla está el código QR de "${p.name}". Enlace: ${workshop.siteUrl(p.slug, ctx.origin)}. Dile que lo escanee; no leas el enlace completo.`, card };
+        },
+      },
+    });
   }
   /**
    * Definiciones en el formato de la API (compatible con OpenAI). Las herramientas privadas (Plane) solo se incluyen
@@ -152,13 +201,13 @@ export class ToolsService {
     const priv = Object.entries(this.ownerTools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
     return [...pub, ...priv, ...(await this.plane.definitions())];
   }
-  async run(name: string, rawArgs: string, owner: boolean): Promise<ToolResult> {
+  async run(name: string, rawArgs: string, owner: boolean, ctx: ToolContext = { origin: '' }): Promise<ToolResult> {
     if (name.startsWith(PLANE_PREFIX)) return { text: owner ? await this.plane.call(name, rawArgs) : 'Error: esa herramienta no existe.' }; // doble control
     const tool = this.tools[name] ?? (owner ? this.ownerTools[name] : undefined);
     if (!tool) return { text: `Error: la herramienta ${name} no existe.` };
     let args: Record<string, unknown> = {};
     try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return { text: 'Error: argumentos invalidos.' }; }
-    try { const out = await tool.run(args); return typeof out === 'string' ? { text: out } : out; }
+    try { const out = await tool.run(args, ctx); return typeof out === 'string' ? { text: out } : out; }
     catch (e) { return { text: `Error al consultar: ${(e as Error).message}. Dile a la persona que no pudiste consultarlo ahora.` }; }
   }
 }

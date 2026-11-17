@@ -9,6 +9,7 @@ import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { WorkshopService } from '../workshop/workshop.service';
 import { MemoryService } from '../memory/memory.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { ToolsService } from '../tools/tools.service';
@@ -51,6 +52,9 @@ interface Session {
   specTimer?: NodeJS.Timeout;
   leads: number;         // interesados guardados en esta sesion (tope contra abuso)
   timers: NodeJS.Timeout[];
+  origin: string;        // direccion publica por la que entro (para enlaces y QR)
+  notes: { text: string; card?: unknown; slug?: string }[]; // avisos del taller pendientes de contar
+  noteTimer?: NodeJS.Timeout;
 }
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
@@ -73,6 +77,10 @@ const FILLERS: Record<string, string> = {
   precio_dolar: 'Ya te digo a cómo está.',
   registrar_interesado: 'Listo, ya lo anoto.',
   ver_interesados: 'Déjame mirar la lista.',
+  programar: 'Listo, se lo paso a Claude Code.',
+  estado_taller: 'Déjame ver cómo va el taller.',
+  cancelar_encargo: 'Ya lo detengo.',
+  mostrar_proyecto: 'Ya te lo muestro.',
 };
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
@@ -105,6 +113,17 @@ Además, según el tema de TU respuesta, puedes agregar después UNA etiqueta de
 Idioma: responde siempre en el idioma en que la persona te habló en su último mensaje (español si no está claro). Las etiquetas van siempre igual, en español.
 Las etiquetas no se leen en voz alta. No uses corchetes para nada más. Ejemplo: "[r:alegria] ¡Gracias, qué amable!"`;
 
+/** Como usar el taller de programacion. Va solo en sesiones del dueño y si hay token de Claude Code. */
+const TALLER_RULES = `
+
+TALLER DE PROGRAMACIÓN: puedes encargarle trabajos de programación a Claude Code con la herramienta programar. Tú no programas: conversas con Javier, entiendes lo que quiere y le pasas el encargo completo.
+- Antes de llamar a programar asegúrate de tener lo esencial (qué es, para quién y qué debe lograr). Si falta algo importante, pregúntalo en una sola frase; si Javier dice que decidas tú, decide.
+- En "encargo" escribe todo lo que Javier dijo, con sus detalles: Claude Code no oye esta conversación.
+- El trabajo tarda minutos y corre en segundo plano: dile que ya empezó y sigue conversando. No digas que terminó hasta que llegue el aviso del taller.
+- Un mensaje que empieza por "(Aviso del taller" lo escribió el sistema, no Javier: cuéntale el resultado en dos o tres frases, sin leer nombres de archivos ni código; si Claude Code dejó una pregunta, hazla. Si hay sitio publicado, dile que el código QR está en pantalla.
+- Para cambios ("ponle otro color", "agrega precios") vuelve a llamar a programar con el mismo proyecto.
+- Solo hay un encargo a la vez. Usa estado_taller si pregunta cómo va, cancelar_encargo si pide detenerlo y mostrar_proyecto para volver a mostrar un código QR.`;
+
 /**
  * WebSocket del navegador.
  *  cliente -> JSON { type: 'hello', code? } | { type: 'playback', playing } ; binario: PCM16 mono 16 kHz del microfono
@@ -124,14 +143,42 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
-    private readonly knowledge: KnowledgeService,
-  ) {}
+    private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService,
+  ) {
+    // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
+    this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
+  }
+  private readonly owners = new Map<Session, WebSocket>();
+
+  /** Prepara el aviso de un proyecto terminado (texto para el modelo + tarjeta con QR) y lo pone en cola. */
+  private async workshopNote(client: WebSocket, s: Session, slug: string) {
+    const p = this.workshop.list().find((x) => x.slug === slug);
+    if (!p || !s.ready) return;
+    const card = await this.workshop.card(slug, s.origin).catch(() => null);
+    const text = `(Aviso del taller, escrito por el sistema: Claude Code ${p.status === 'error' ? 'NO pudo terminar' : 'terminó'} el encargo del proyecto "${p.name}". ` +
+      `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}Informe de Claude Code: ${(p.lastSummary ?? 'sin informe').slice(0, 1500)})`;
+    s.notes.push({ text, card: card ?? undefined, slug });
+    this.pumpNotes(client, s);
+  }
+
+  /** Cuenta el siguiente aviso cuando nadie esta hablando (ni Javier ni el avatar). */
+  private pumpNotes(client: WebSocket, s: Session) {
+    clearTimeout(s.noteTimer);
+    if (!s.ready || !s.notes.length) return;
+    if (s.turn || s.clientPlaying || s.finals.length) { s.noteTimer = setTimeout(() => this.pumpNotes(client, s), 1000); return; }
+    const note = s.notes.shift()!;
+    if (note.card) this.send(client, { type: 'card', ...(note.card as object) });
+    if (note.slug) this.workshop.markSeen(note.slug);
+    s.lastActivity = Date.now();
+    void this.respond(client, s, note.text, 'es', true).then(() => this.pumpNotes(client, s));
+  }
 
   handleConnection(client: WebSocket, req?: IncomingMessage) {
     const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [] };
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [],
+      origin: req?.headers?.host ? `${String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${req.headers.host}` : '' };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
       if (isBinary) { if (s.ready) s.stt?.send(raw as Buffer); return; }
@@ -166,7 +213,7 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES : '') + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
@@ -185,11 +232,16 @@ export class SessionGateway implements OnGatewayConnection {
       this.say(client, s, turn, greeting);
       void this.finish(client, s, turn, 'saludo');
     }
+    if (s.owner) {
+      this.owners.set(s, client);
+      // Encargos que terminaron cuando no habia una sesion abierta: se cuentan despues del saludo.
+      for (const p of this.workshop.unseen()) void this.workshopNote(client, s, p.slug);
+    }
   }
 
   private end(s: Session) {
     if (!s.ready) return;
-    s.ready = false; this.active--;
+    s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer);
     s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
     if (s.visitor && s.userTurns > 0) void this.remember(s);
     for (const t of s.timers) { clearTimeout(t); clearInterval(t); }
@@ -273,7 +325,7 @@ export class SessionGateway implements OnGatewayConnection {
     s.spec = spec;
     (async () => {
       const [tools, ctx] = await Promise.all([this.tools.definitions(s.owner), this.context(s, text)]);
-      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal)) {
+      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal, s.owner ? 2000 : 400)) {
         if (ev.type === 'text') spec.tFirst ??= Date.now();
         spec.events.push(ev); spec.wake?.();
       }
@@ -287,18 +339,18 @@ export class SessionGateway implements OnGatewayConnection {
     }
   }
 
-  private async respond(client: WebSocket, s: Session, userText: string, lang = 'es') {
+  private async respond(client: WebSocket, s: Session, userText: string, lang = 'es', auto = false) {
     const turn = this.newTurn(s);
-    turn.lang = lang; s.userTurns++;
+    turn.lang = lang; if (!auto) s.userTurns++;
     // Respuesta adelantada: sirve solo si se pidio con el mismo texto que quedo como definitivo.
     const spec = s.spec && norm(s.spec.text) === norm(userText) && s.spec.lang === lang && !s.spec.err ? s.spec : undefined;
     if (!spec) s.spec?.ctrl.abort();
     s.spec = undefined;
     if (spec) turn.ctrl.signal.addEventListener('abort', () => spec.ctrl.abort());
     let hit = !!spec;
-    this.send(client, { type: 'user_final', text: userText });
+    if (!auto) this.send(client, { type: 'user_final', text: userText }); // un aviso del sistema no se muestra como dicho por la persona
     this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
-    const userEntry = { role: 'user', content: userMsg(userText, lang) };
+    const userEntry = { role: 'user', content: auto ? userText : userMsg(userText, lang) };
     s.history.push(userEntry);
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
     try {
@@ -310,9 +362,10 @@ export class SessionGateway implements OnGatewayConnection {
         if (round === 0 && spec) source = this.drain(spec);
         else {
           // El contexto de conocimiento acompana al mensaje solo en este turno; en el historial queda el mensaje limpio.
-          const ctx = await this.context(s, userText);
+          const ctx = auto ? '' : await this.context(s, userText);
           const view = ctx ? s.history.map((m) => (m === userEntry ? { ...m, content: m.content + ctx } : m)) : s.history;
-          source = this.llm.chat(view, await this.tools.definitions(s.owner), turn.ctrl.signal);
+          // En modo dueño el encargo para el taller va completo en los argumentos de la herramienta: necesita mas espacio.
+          source = this.llm.chat(view, await this.tools.definitions(s.owner), turn.ctrl.signal, s.owner ? 2000 : 400);
         }
         for await (const ev of source) {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
@@ -333,12 +386,13 @@ export class SessionGateway implements OnGatewayConnection {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner);
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin });
             result = out.text;
             if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++;
             // Efectos que dependen del dato consultado: fondo del clima, billetes del dolar.
             if (out.scene && !turn.ctrl.signal.aborted) { turn.sceneLocked = true; this.send(client, { type: 'scene', name: out.scene }); }
             if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
+            if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });
