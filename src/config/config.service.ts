@@ -27,6 +27,8 @@ export class ConfigService {
   readonly ownerSecret: string;
   readonly ownerDays: number;
   readonly ownerPrompt: string;
+  /** Habla costeña: reglas y diccionario que se agregan al prompt ('' = apagada). HABLA_COSTENA=1 y HABLA_COSTENA_NIVEL. */
+  readonly costenoPrompt: string;
   readonly dataDir: string;
   readonly planeMcpUrl: string;
   readonly planeApiKey: string;
@@ -234,6 +236,24 @@ export class ConfigService {
     this.visitorMemoryDays = int('VISITOR_MEMORY_DAYS', 90, 0);
     const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
     this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';
+    // Habla costeña (pedido por Javier el 2026-11-18): diccionario "Costeñol" de la UTB, pasado a prompts/costenol.md.
+    const costeno = ['1', 'true', 'si', 'sí', 'on'].includes(str('HABLA_COSTENA', '0').toLowerCase());
+    const costenoFile = str('HABLA_COSTENA_FILE', 'prompts/costenol.md');
+    const nivel = str('HABLA_COSTENA_NIVEL', 'suave').toLowerCase();
+    const dosis = nivel === 'fuerte' ? 'Úsalas con frecuencia: casi todas tus respuestas llevan una o dos, y puedes comerte la "d" de los participios (cansao, pelao) como se habla en la costa.'
+      : nivel === 'medio' ? 'Usa una expresión en más o menos la mitad de tus respuestas, cuando caiga natural.'
+      : 'Úsalas con medida: una expresión cada dos o tres respuestas, solo cuando caiga natural; la mayoría de tus frases siguen en español neutro.';
+    this.costenoPrompt = costeno && existsSync(costenoFile) ? `
+
+HABLA COSTEÑA: eres de Sucre, en la costa Caribe de Colombia, y hablas como se habla allá. Estas son expresiones costeñas con su significado y un ejemplo. ${dosis}
+- Sirven también para ENTENDER a quien las use contigo.
+- Que suene a conversación de verdad, no a lista: nunca metas varias seguidas ni las expliques, salvo que te pregunten qué significa una.
+- Con alguien que viene a preguntar por tus servicios, mantén el respeto: saludos y muletillas amables ("ajá", "bacano", "pri" si hay confianza), nada que suene a burla.
+- Nunca le digas a la persona algo que la ofenda (maco, calilla, fulero, pringacara), ni en broma.
+- Si la persona habla en otro idioma, responde en ese idioma sin estas expresiones.
+- Las cifras, los datos de contacto y las confirmaciones (repetir un número, pedir autorización) van siempre claros y en español neutro.
+Expresiones:
+${readFileSync(costenoFile, 'utf8').trim()}` : '';
     const file = str('SYSTEM_PROMPT_FILE', 'prompts/system.md');
     this.systemPrompt = str('SYSTEM_PROMPT') || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '');
     if (!this.systemPrompt) throw new Error('No hay system prompt: define SYSTEM_PROMPT o SYSTEM_PROMPT_FILE');
