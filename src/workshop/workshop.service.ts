@@ -22,6 +22,7 @@ export interface Project {
   jobs: number;
   check?: SiteCheck;         // revision automatica del sitio publicado tras el ultimo encargo
   repaired?: boolean;        // el ultimo encargo necesito una correccion automatica
+  sessionJobs?: number;      // encargos hechos en la sesion actual de Claude Code (al llegar al tope se empieza una nueva)
 }
 /** Modelos de Claude Code que Javier puede elegir por voz (verificados con su suscripcion el 2026-11-17). */
 export const MODELS = [
@@ -51,6 +52,7 @@ Trabajas para Javier Hermosilla, que te da los encargos hablando con su avatar d
 - No dejes procesos corriendo (servidores, watchers) al terminar. Si pruebas algo con un servidor, apágalo.
 - No inventes datos de Javier, precios ni testimonios; si faltan, usa textos claramente marcados para completar y dilo en el informe.
 - Si te falta una decisión importante, toma la opción más razonable y dilo; si de verdad no puedes seguir, pregunta en el informe.
+- Memoria del proyecto: mantén en la raíz un archivo ESTADO.md corto (máximo 40 líneas, texto plano) con: qué es el proyecto y para quién, decisiones tomadas y su motivo, estructura de archivos, cómo probarlo y qué quedó pendiente. Si existe, léelo ANTES de empezar; actualízalo SIEMPRE antes de terminar. Cada cierto tiempo empezarás sin recordar la conversación anterior y ese archivo será lo único que tengas: escribe ahí lo que necesitarías saber, no la historia de lo que pasó.
 - Comprobar es parte del trabajo: antes de terminar, PRUEBA lo que hiciste. Abre los archivos que escribiste, verifica que cada enlace, imagen, estilo y script local exista con ese nombre exacto, ejecuta lo que se pueda ejecutar (node --check, pruebas, un servidor temporal y curl) y corrige lo que falle. Al terminar, el servidor revisa solo los enlaces y archivos de "sitio/"; si encuentra fallos te los devuelve.
 - Termina con un informe BREVE en español, en texto plano sin markdown (se leerá en voz alta): qué hiciste, qué quedó pendiente y, si aplica, la pregunta que necesitas que te respondan. Cierra con dos frases: "Comprobado:" (qué verificaste y cómo) y "Sin comprobar:" (lo que no pudiste verificar). No digas que algo funciona si no lo probaste.`;
 
@@ -196,7 +198,17 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
       this.projects.push(p);
     }
     const project = p;
-    const args = ['-p', task, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+    // Sesion de Claude Code: retomarla le da memoria, pero cada encargo relee toda la conversacion anterior. Tras
+    // TALLER_SESSION_JOBS encargos se empieza una sesion nueva que arranca leyendo ESTADO.md (si el proyecto ya lo tiene;
+    // si no, se sigue retomando hasta que lo escriba). Una correccion automatica siempre sigue en la misma sesion.
+    let prompt = task;
+    if (project.sessionId && !repair && (project.sessionJobs ?? project.jobs) >= this.cfg.tallerSessionJobs && existsSync(join(this.dir(project.slug), 'ESTADO.md'))) {
+      this.log.log(`taller: sesión nueva para "${project.slug}" tras ${project.sessionJobs ?? project.jobs} encargos`);
+      project.sessionId = undefined; project.sessionJobs = 0;
+      prompt = `(Empiezas una sesión nueva sobre un proyecto que ya existe y no recuerdas la conversación anterior. Lee primero ESTADO.md y revisa los archivos que haga falta antes de cambiar nada.)\n\n${task}`;
+    }
+    if (!repair) project.sessionJobs = (project.sessionJobs ?? 0) + 1;
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
       '--allowedTools', 'Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,TodoWrite,Agent,Task', '--max-turns', String(this.cfg.tallerMaxTurns),
       '--append-system-prompt', RULES(project.slug, formUrl)];
     if (project.sessionId) args.push('--resume', project.sessionId);
