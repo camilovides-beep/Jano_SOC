@@ -9,3 +9,4 @@ public/vendor
 .git
 .DS_Store
 *.zip
+docs
