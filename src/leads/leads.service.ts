@@ -47,6 +47,20 @@ export class LeadsService {
   leadsSince(iso: string): Promise<Lead[]> { return this.db.query<Lead>('SELECT * FROM leads WHERE created_at >= $1 ORDER BY id DESC LIMIT 30', [iso]); }
   async countByStatus(status: string): Promise<number> { return Number((await this.db.query('SELECT COUNT(*) AS n FROM leads WHERE status = $1', [status]))[0]?.n ?? 0); }
 
+  /** Interesados que siguen en "nuevo" desde hace `days` dias o mas, del mas antiguo al mas reciente. */
+  pending(days: number): Promise<Lead[]> {
+    return this.db.query<Lead>(`SELECT * FROM leads WHERE status = 'nuevo' AND created_at <= $1 ORDER BY created_at LIMIT 100`, [new Date(Date.now() - days * 86_400_000).toISOString()]);
+  }
+  /** Busca por numero (#12) o por parte del nombre o la empresa, entre los 200 mas recientes. */
+  async find(who: string): Promise<Lead[]> {
+    const q = who.trim(), id = Number(q.replace(/^#/, ''));
+    if (/^#?\d+$/.test(q)) { const l = await this.get(id); return l ? [l] : []; }
+    const plain = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const words = plain(q).split(/\s+/).filter((w) => w.length > 1);
+    if (!words.length) return [];
+    return (await this.list(200)).filter((l) => { const hay = plain(`${l.name} ${l.company}`); return words.every((w) => hay.includes(w)); });
+  }
+
   async add(input: NewLead): Promise<Lead> {
     const row = [new Date().toISOString(), clip(input.name, 120), clip(input.contact, 160), clip(input.company, 120),
       INTERESTS.includes(input.interest as any) ? input.interest : 'otro', clip(input.detail, 800), clip(input.source, 60)];

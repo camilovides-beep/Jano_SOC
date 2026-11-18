@@ -25,6 +25,8 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
 import { UsageService } from './usage/usage.service';
 import { DbService } from './db/db.service';
 import { ImagesService } from './images/images.service';
+import { AlertsService } from './ops/alerts.service';
+import { OpsService } from './ops/ops.service';
 
 @Module({
   imports: [
@@ -34,6 +36,6 @@ import { ImagesService } from './images/images.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, DbService, UsageService, ImagesService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

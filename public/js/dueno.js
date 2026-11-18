@@ -95,10 +95,13 @@ async function loadSummary() {
   const s = summary.stats, nuevo = s.byStatus.find((r) => r.k === 'nuevo')?.n || 0, last7 = s.days.slice(-7).reduce((a, d) => a + d.leads, 0);
   const tile = (value, label) => el('div', { className: 'tile' }, el('b', { textContent: value }), el('span', { textContent: label }));
   $('tiles').replaceChildren(
-    tile(n(s.total), 'Interesados en total'), tile(n(nuevo), 'Sin contactar'), tile(n(last7), 'Interesados en 7 días'),
+    tile(n(s.total), 'Interesados en total'), tile(n(nuevo), 'Sin contactar'), tile(n(summary.pending), 'Esperando hace días'), tile(n(last7), 'Interesados en 7 días'),
     tile(n(s.conversations), 'Conversaciones guardadas, 30 días'), tile(`${n(s.talkSeconds / 60)} min`, 'Tiempo conversado, 30 días'),
     ...(summary.workshop.enabled ? [tile(n(summary.workshop.projects), 'Proyectos del taller')] : []));
   $('features').replaceChildren('Funciones: ', ...Object.entries(summary.features || {}).flatMap(([name, on], i) => [i ? ' · ' : '', el('span', { style: `color:${on ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${on ? '✓' : '✗'} ${name}${on ? '' : ' (falta su clave)'}` })]));
+  const sv = Object.entries(summary.services || {});
+  $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : '#ff8a8a'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
+    summary.alerts ? '' : ' · Los avisos por Telegram están apagados (falta configurarlo).');
   barChart($('ch-leads'), s.days.map((d) => d.day), [{ name: 'Interesados', values: s.days.map((d) => d.leads) }], 'interesados');
   hbars($('by-status'), s.byStatus, pretty); hbars($('by-source'), s.bySource, SOURCE); hbars($('by-interest'), s.byInterest, pretty);
 }
@@ -126,6 +129,7 @@ function drawLeads() {
     return el('li', {},
       el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),
+      l.status === 'nuevo' && Date.now() - Date.parse(l.created_at) > 2 * 86400000 ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Sin contactar hace ${Math.floor((Date.now() - Date.parse(l.created_at)) / 86400000)} días` }) : null,
       l.detail ? el('div', { textContent: l.detail }) : null, el('div', { className: 'row' }, sel, del), notes);
   }) : [el('p', { className: 'muted', textContent: leads.length ? 'Ninguno coincide con el filtro.' : 'Todavía no hay interesados.' })]));
 }

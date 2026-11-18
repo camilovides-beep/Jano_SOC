@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Req, Res, StreamableFile } from '@nestjs/common';
+import { ConfigService } from '../config/config.service';
 import type { Request, Response } from 'express';
 import { LeadsService, STATUSES } from '../leads/leads.service';
 import { OWNER_COOKIE, OwnerService } from './owner.service';
@@ -9,6 +10,8 @@ import { WorkshopService } from '../workshop/workshop.service';
 import { UsageService } from '../usage/usage.service';
 import { ImagesService } from '../images/images.service';
 import { MusicService } from '../music/music.service';
+import { AlertsService } from '../ops/alerts.service';
+import { OpsService } from '../ops/ops.service';
 
 // Detras del proxy, la ultima direccion de X-Forwarded-For la puso el proxy (las anteriores las puede inventar el cliente).
 const ipOf = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',').pop()!.trim();
@@ -17,7 +20,8 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService) {}
+  private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
     return `${OWNER_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
@@ -72,7 +76,16 @@ export class OwnerController {
     const projects = this.workshop.list();
     // Que funciones tienen su clave puesta: sirve para ver de un vistazo por que el avatar dice que no puede hacer algo.
     const features = { 'Taller de programación': this.workshop.enabled, 'Música': this.music.enabled, 'Búsqueda de fotos': this.images.enabled, 'Generación de imágenes': this.images.canGenerate };
-    return { db: this.leads.dbKind, features, stats, usage, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
+    return { db: this.leads.dbKind, features, services: this.alerts.status(), alerts: this.alerts.enabled, pending: (await this.leads.pending(this.followDays)).length, stats, usage, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
+  }
+
+  /** Respaldo completo de la base, para descargar desde el panel. */
+  @Get('backup')
+  async backup(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    this.require(req);
+    const { name, file } = await this.ops.dump();
+    res.setHeader('Content-Type', 'application/gzip'); res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    return new StreamableFile(file);
   }
 
   @Get('conversations')

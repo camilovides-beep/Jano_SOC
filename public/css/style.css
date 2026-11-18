@@ -108,3 +108,4 @@ button.ghost { background: rgba(255, 255, 255, .12); }
   .gallery { right: 50%; top: auto; bottom: calc(140px + env(safe-area-inset-bottom)); transform: translateX(50%); width: min(94vw, 640px); }
   .gallery-items { grid-auto-flow: column; grid-auto-columns: 42%; overflow-x: auto; overflow-y: hidden; }
 }
+.owner.demo { background: rgba(217, 89, 38, .3); border-color: rgba(217, 89, 38, .8); }

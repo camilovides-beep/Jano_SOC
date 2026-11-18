@@ -218,6 +218,8 @@ function onMessage(msg) {
       backdrop.show(msg.name); break;
     case 'card':
       showCard(msg); break;
+    case 'demo': // demostracion en vivo: el avatar esta haciendo de asistente de otro negocio
+      $('demo').hidden = !msg.on; $('demo').textContent = msg.on ? `Demostración: asistente de ${msg.title}` : ''; break;
     case 'gallery': // fotos o bocetos al lado del avatar
       showGallery(msg); break;
     case 'music': // musica de fondo
@@ -238,7 +240,7 @@ function shutdown(message) {
   suspended = false; awayNotice = ''; $('away').hidden = true;
   setWork(null); music.stop(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
-  $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
+  $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
   $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');

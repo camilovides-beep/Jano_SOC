@@ -77,6 +77,14 @@ export class ConfigService {
   readonly micGateRms: number;
   /** PostgreSQL (postgres://usuario:clave@host:5432/base). Vacio = SQLite en DATA_DIR. */
   readonly databaseUrl: string;
+  /** Vigilancia, respaldo diario y seguimiento de interesados (horas en la zona de Javier; -1 = apagado). */
+  readonly alertCheckMinutes: number;
+  readonly alertDeepseekBalance: number;
+  readonly backupHour: number;
+  readonly backupKeep: number;
+  readonly backupTelegram: boolean;
+  readonly followupHour: number;
+  readonly followupDays: number;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
   readonly saveConversations: boolean;
   /** Si la revision del sitio encuentra fallos, devolverselos una vez a Claude Code antes de avisar. */
@@ -206,6 +214,14 @@ export class ConfigService {
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();
     if (this.databaseUrl && !/^postgres(ql)?:\/\//.test(this.databaseUrl)) throw new Error('DATABASE_URL debe empezar por postgres://');
     this.saveConversations = process.env.SAVE_CONVERSATIONS === '1';
+    const hour = (name: string, def: number) => { const v = Number(process.env[name] ?? def); return Number.isInteger(v) && v >= -1 && v <= 23 ? v : def; };
+    this.alertCheckMinutes = int('ALERT_CHECK_MINUTES', 5, 0);
+    this.alertDeepseekBalance = Math.max(0, Number(process.env.ALERT_DEEPSEEK_BALANCE ?? 2) || 0);
+    this.backupHour = hour('BACKUP_HOUR', 3);
+    this.backupKeep = int('BACKUP_KEEP', 14, 1);
+    this.backupTelegram = process.env.BACKUP_TELEGRAM !== '0';
+    this.followupHour = hour('FOLLOWUP_HOUR', 8);
+    this.followupDays = int('FOLLOWUP_DAYS', 2, 1);
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
     catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }
