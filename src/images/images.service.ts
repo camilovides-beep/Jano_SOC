@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 
@@ -38,7 +38,7 @@ export class ImagesService {
   private readonly cache = new Map<string, { at: number; items: GalleryItem[] }>();
   private day = ''; private used = 0; private generated = 0;
   private readonly dir: string;
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) { this.dir = join(cfg.dataDir, 'imagenes'); }
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) { this.dir = resolve(cfg.dataDir, 'imagenes'); } // absoluta: res.sendFile no acepta rutas relativas
 
   /** Hay busqueda de fotos. */
   get enabled() { return !!this.cfg.unsplashAccessKey; }
