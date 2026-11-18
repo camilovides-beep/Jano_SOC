@@ -81,6 +81,10 @@ export class ConfigService {
   readonly tallerAutoFix: boolean;
   /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
   readonly tallerSessionJobs: number;
+  /** Fotos de Pexels (vacia = sin busqueda de imagenes). Topes: busquedas por conversacion de un visitante y por dia. */
+  readonly pexelsApiKey: string;
+  readonly imagesPerSession: number;
+  readonly imagesDailySearches: number;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
   readonly usagePrices: Record<string, number>;
   readonly wakeWords: string[];
@@ -190,6 +194,9 @@ export class ConfigService {
     this.micGateRms = process.env.MIC_GATE === '0' ? 0 : Math.min(0.2, Math.max(0.002, Number(process.env.MIC_GATE_RMS) || 0.012));
     this.tallerAutoFix = process.env.TALLER_AUTO_FIX !== '0';
     this.tallerSessionJobs = int('TALLER_SESSION_JOBS', 4, 1);
+    this.pexelsApiKey = (process.env.PEXELS_API_KEY ?? '').trim();
+    this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
+    this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();
     if (this.databaseUrl && !/^postgres(ql)?:\/\//.test(this.databaseUrl)) throw new Error('DATABASE_URL debe empezar por postgres://');
     this.saveConversations = process.env.SAVE_CONVERSATIONS === '1';

@@ -118,6 +118,7 @@ function visitorId() {
 }
 let cardTimer = null;
 function showCard(card) {
+  if (gallery) hideGallery(); // comparten el mismo lugar de la pantalla
   $('card-title').textContent = card.title || '';
   $('card-lines').replaceChildren(...(card.lines || []).map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
   $('card-qr').hidden = !card.qr; if (card.qr) $('card-qr').src = card.qr;
@@ -126,6 +127,44 @@ function showCard(card) {
   clearTimeout(cardTimer); cardTimer = setTimeout(hideCard, card.qr ? 30000 : 14000); // el QR se queda mas tiempo para alcanzar a escanearlo
 }
 function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; }
+
+// Galeria: fotos (Pexels) o bocetos en vivo (paginas del taller), numerados al lado del avatar. La seleccionada se pone
+// ademas de fondo. Los bocetos van en iframes aislados (sandbox): son paginas escritas por Claude Code.
+let gallery = null;
+function frameOf(url) { const f = document.createElement('iframe'); f.src = url; f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('scrolling', 'no'); f.tabIndex = -1; f.loading = 'lazy'; f.title = ''; return f; }
+function selectGallery(index, tell) {
+  if (!gallery) return;
+  gallery.index = Math.max(0, Math.min(gallery.items.length - 1, index));
+  const item = gallery.items[gallery.index];
+  [...$('gallery-items').children].forEach((el, i) => { el.classList.toggle('on', i === gallery.index); if (i === gallery.index) el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
+  const bg = $('photo-bg');
+  if (item.frame) bg.replaceChildren(frameOf(item.frame)); else { const img = new Image(); img.src = item.full || item.thumb; img.alt = ''; bg.replaceChildren(img); }
+  bg.classList.add('on');
+  const credit = $('gallery-credit'); credit.replaceChildren();
+  if (gallery.kind === 'fotos') { // condiciones de Pexels: enlace visible y credito al fotografo
+    const a = document.createElement('a'); a.href = item.link || 'https://www.pexels.com'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = item.credit ? `Foto de ${item.credit} en Pexels` : 'Fotos de Pexels';
+    credit.append(a);
+  } else credit.textContent = item.label || '';
+  if (tell) socket?.send({ type: 'gallery', index: gallery.index });
+}
+function showGallery(msg) {
+  if (msg.action === 'hide' || !msg.items?.length) { hideGallery(); return; }
+  if (msg.action === 'select' && gallery && gallery.items.length === msg.items.length) { selectGallery(msg.index, false); return; }
+  gallery = { kind: msg.kind, items: msg.items, index: msg.index || 0 };
+  hideCard(); $('gallery-title').textContent = msg.title || '';
+  $('gallery-items').replaceChildren(...msg.items.map((item, i) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'gallery-item'; b.setAttribute('aria-label', `${i + 1}: ${item.label || ''}`);
+    if (item.frame) b.append(frameOf(item.frame)); else { const img = new Image(); img.src = item.thumb; img.alt = item.label || ''; img.loading = 'lazy'; b.append(img); }
+    const num = document.createElement('span'); num.textContent = String(i + 1); b.append(num);
+    b.addEventListener('click', () => selectGallery(i, true));
+    return b;
+  }));
+  $('gallery').hidden = false;
+  // Las miniaturas de bocetos son la pagina completa (1280 px de ancho) reducida al ancho de la miniatura.
+  requestAnimationFrame(() => { for (const el of $('gallery-items').children) { const f = el.querySelector('iframe'); if (f) f.style.transform = `scale(${el.clientWidth / 1280})`; } });
+  selectGallery(gallery.index, false);
+}
+function hideGallery() { gallery = null; $('gallery').hidden = true; $('gallery-items').replaceChildren(); $('photo-bg').classList.remove('on'); setTimeout(() => { if (!gallery) $('photo-bg').replaceChildren(); }, 900); }
 
 function setState(s) {
   if (s === state) return;
@@ -179,6 +218,8 @@ function onMessage(msg) {
       backdrop.show(msg.name); break;
     case 'card':
       showCard(msg); break;
+    case 'gallery': // fotos o bocetos al lado del avatar
+      showGallery(msg); break;
     case 'music': // musica de fondo
       onMusic(msg); break;
     case 'work': // progreso del taller de programacion
@@ -195,7 +236,7 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); stopSpeech(); hideCard(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  setWork(null); music.stop(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
   $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -271,7 +312,7 @@ requestAnimationFrame(frame);
 // Suspendido con la sesion abierta: un toque en cualquier parte lo despierta.
 window.addEventListener('pointerdown', () => { if (live && suspended) socket?.send({ type: 'wake' }); });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork, music: onMusic, message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

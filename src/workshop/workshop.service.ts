@@ -329,6 +329,20 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     } catch { return null; }
   }
 
+  /** Bocetos publicados de un proyecto: sitio/bocetos/<n>/index.html, con el nombre y la frase que dejo Claude Code en bocetos.json. */
+  sketches(slug: string): { n: number; name: string; desc: string }[] {
+    const base = join(this.dir(slug), 'sitio', 'bocetos');
+    let meta: any[] = [];
+    try { const d = JSON.parse(readFileSync(join(base, 'bocetos.json'), 'utf8')); if (Array.isArray(d)) meta = d; } catch { /* sin descripciones */ }
+    const clean = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    const out: { n: number; name: string; desc: string }[] = [];
+    for (let n = 1; n <= 6; n++) if (this.siteFile(slug, `bocetos/${n}/index.html`)) {
+      const m = meta.find((x) => Number(x?.n) === n);
+      out.push({ n, name: clean(m?.nombre, 40) || `Boceto ${n}`, desc: clean(m?.descripcion, 160) });
+    }
+    return out;
+  }
+
   /** Direccion publica del sitio de un proyecto ('' si no tiene). */
   siteUrl(slug: string, origin: string): string { return this.hasSite(slug) ? `${this.cfg.publicUrl || origin}/p/${slug}/` : ''; }
 

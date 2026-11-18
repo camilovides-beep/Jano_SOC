@@ -12,6 +12,7 @@
 </head>
 <body>
   <canvas id="backdrop" aria-hidden="true"></canvas>
+  <div id="photo-bg" class="photo-bg" aria-hidden="true"></div>
   <canvas id="stage" aria-label="Avatar"></canvas>
   <div id="fx" class="fx" aria-hidden="true"></div>
 
@@ -27,6 +28,12 @@
     <ul id="card-lines"></ul>
     <img id="card-qr" alt="Código QR de contacto" hidden>
     <p id="card-caption"></p>
+  </aside>
+
+  <aside id="gallery" class="gallery" hidden aria-live="polite">
+    <h2 id="gallery-title"></h2>
+    <div id="gallery-items" class="gallery-items"></div>
+    <p id="gallery-credit" class="gallery-credit"></p>
   </aside>
 
   <aside id="music" class="music" hidden>
