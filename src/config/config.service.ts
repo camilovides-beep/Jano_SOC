@@ -73,6 +73,8 @@ export class ConfigService {
   readonly suspendMaxMinutes: number;
   /** Umbral de volumen (0..1) de la compuerta del microfono en esperas largas; 0 = sin compuerta. */
   readonly micGateRms: number;
+  /** Si la revision del sitio encuentra fallos, devolverselos una vez a Claude Code antes de avisar. */
+  readonly tallerAutoFix: boolean;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
   readonly usagePrices: Record<string, number>;
   readonly wakeWords: string[];
@@ -180,6 +182,7 @@ export class ConfigService {
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.suspendMaxMinutes = int('SUSPEND_MAX_MINUTES', 120, 1);
     this.micGateRms = process.env.MIC_GATE === '0' ? 0 : Math.min(0.2, Math.max(0.002, Number(process.env.MIC_GATE_RMS) || 0.012));
+    this.tallerAutoFix = process.env.TALLER_AUTO_FIX !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
     catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }

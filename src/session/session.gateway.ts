@@ -206,8 +206,11 @@ export class SessionGateway implements OnGatewayConnection {
     const p = this.workshop.list().find((x) => x.slug === slug);
     if (!p || !s.ready) return;
     const card = await this.workshop.card(slug, s.origin).catch(() => null);
+    const c = p.check, review = !c ? '' : c.ok
+      ? `Revisión automática del servidor: sin problemas en ${c.pages} ${c.pages === 1 ? 'página' : 'páginas'} y ${c.files} archivos (enlaces, imágenes, estilos y scripts locales existen)${p.repaired ? '; hizo falta una corrección automática' : ''}. Puedes decir que quedó publicado y revisado. `
+      : `Revisión automática del servidor: ENCONTRÓ ${c.issues.length} problemas que siguen sin resolver${p.repaired ? ' aun después de una corrección automática' : ''}. No digas que quedó listo: dile a Javier que terminó pero con fallos, cuéntale cuáles en palabras simples y pregúntale si los mandas a corregir. Problemas: ${asData('la revisión del sitio', c.issues.join(' | '))} `;
     const text = `(Aviso del taller, escrito por el sistema: Claude Code ${p.status === 'error' ? 'NO pudo terminar' : 'terminó'} el encargo del proyecto "${p.name}". ` +
-      `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}Informe de Claude Code: ${asData('el informe de Claude Code', (p.lastSummary ?? 'sin informe').slice(0, 1500))})`;
+      `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}${review}Informe de Claude Code: ${asData('el informe de Claude Code', (p.lastSummary ?? 'sin informe').slice(0, 1500))})`;
     s.notes.push({ text, card: card ?? undefined, slug });
     if (s.suspended) this.send(client, { type: 'suspend', on: true, notice: this.suspendNotice(s) }); // suspendido: aviso en pantalla, sin voz
     this.pumpNotes(client, s);

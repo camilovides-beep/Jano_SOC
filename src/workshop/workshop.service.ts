@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import * as QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
+import { checkSite, SiteCheck } from './site-check';
 
 export interface Project {
   slug: string;
@@ -18,6 +19,8 @@ export interface Project {
   model?: string;            // modelo del ultimo encargo
   unseen?: boolean;          // termino y aun no se le ha contado a Javier
   jobs: number;
+  check?: SiteCheck;         // revision automatica del sitio publicado tras el ultimo encargo
+  repaired?: boolean;        // el ultimo encargo necesito una correccion automatica
 }
 /** Modelos de Claude Code que Javier puede elegir por voz (verificados con su suscripcion el 2026-11-17). */
 export const MODELS = [
@@ -31,7 +34,7 @@ export interface WorkState {
   active: boolean; project?: string; model?: string; activity?: string; spoken?: string;
   steps?: number; agents?: number; agentsTotal?: number; seconds?: number; code?: string[];
 }
-export interface JobDone { project: Project; ok: boolean; summary: string; seconds: number; site: boolean; }
+export interface JobDone { project: Project; ok: boolean; summary: string; seconds: number; site: boolean; check?: SiteCheck; }
 
 /** Nombre de carpeta seguro: minusculas, digitos y guiones. */
 export function slugify(name: string): string {
@@ -47,7 +50,8 @@ Trabajas para Javier Hermosilla, que te da los encargos hablando con su avatar d
 - No dejes procesos corriendo (servidores, watchers) al terminar. Si pruebas algo con un servidor, apágalo.
 - No inventes datos de Javier, precios ni testimonios; si faltan, usa textos claramente marcados para completar y dilo en el informe.
 - Si te falta una decisión importante, toma la opción más razonable y dilo; si de verdad no puedes seguir, pregunta en el informe.
-- Termina con un informe BREVE en español, en texto plano sin markdown (se leerá en voz alta): qué hiciste, qué quedó pendiente y, si aplica, la pregunta que necesitas que te respondan.`;
+- Comprobar es parte del trabajo: antes de terminar, PRUEBA lo que hiciste. Abre los archivos que escribiste, verifica que cada enlace, imagen, estilo y script local exista con ese nombre exacto, ejecuta lo que se pueda ejecutar (node --check, pruebas, un servidor temporal y curl) y corrige lo que falle. Al terminar, el servidor revisa solo los enlaces y archivos de "sitio/"; si encuentra fallos te los devuelve.
+- Termina con un informe BREVE en español, en texto plano sin markdown (se leerá en voz alta): qué hiciste, qué quedó pendiente y, si aplica, la pregunta que necesitas que te respondan. Cierra con dos frases: "Comprobado:" (qué verificaste y cómo) y "Sin comprobar:" (lo que no pudiste verificar). No digas que algo funciona si no lo probaste.`;
 
 /**
  * Taller de programacion del dueño: cada proyecto es una carpeta en DATA_DIR/proyectos y los encargos los ejecuta
@@ -167,7 +171,7 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
    * Empieza un encargo y vuelve enseguida; el resultado llega por `onDone`.
    * Devuelve el texto para el modelo (si empezo o por que no).
    */
-  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string): string {
+  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string, repair = false): string {
     if (!this.enabled) return 'El taller no está configurado (falta CLAUDE_CODE_OAUTH_TOKEN).';
     task = task.trim();
     if (task.length < 8) return 'Falta describir el encargo con más detalle.';
@@ -260,10 +264,21 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
       else if (result?.subtype === 'error_max_turns') { ok = false; summary = `Llegó al máximo de pasos y quedó a medias. ${lastText}`; }
       else if (!ok) summary = `Claude Code falló${err ? `: ${err.message}` : ''}. ${summary || stderr.replace(/\s+/g, ' ').slice(-300) || `código ${code}`}`;
       project.status = ok || job.cancelled ? 'libre' : 'error';
+      // Prueba antes de "terminado": el servidor revisa el sitio publicado. Si hay fallos, se le devuelven a Claude Code
+      // UNA vez (misma sesion) antes de avisarle a Javier; si siguen, el aviso lo dice.
+      const check = this.hasSite(project.slug) ? checkSite(join(this.dir(project.slug), 'sitio')) : undefined;
+      project.check = check; project.repaired = repair;
+      if (check && !check.ok) this.log.warn(`taller: la revisión de "${project.slug}" encontró ${check.issues.length} problemas${repair ? ' (tras la corrección)' : ''}`);
+      if (ok && check && !check.ok && !repair && this.cfg.tallerAutoFix) {
+        const original = project.lastTask;
+        project.lastSummary = summary.slice(0, 4000); this.save();
+        this.start(project.name, `La revisión automática del servidor encontró estos problemas en la carpeta sitio/ después de tu último trabajo:\n- ${check.issues.join('\n- ')}\nCorrígelos, vuelve a comprobar cada enlace y archivo, y termina con el informe completo del encargo original (no solo de esta corrección).`, formUrl, false, modelName, true);
+        if (this.job) { project.lastTask = original; this.save(); return; } // el aviso a Javier sale cuando termine la correccion
+      }
       project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
       this.save();
       this.log.log(`taller: "${project.slug}" ${ok ? 'terminó' : 'NO terminó'} en ${seconds} s, ${job.steps} pasos${result?.num_turns ? `, ${result.num_turns} turnos` : ''}`);
-      const done: JobDone = { project, ok, summary: project.lastSummary, seconds, site: this.hasSite(project.slug) };
+      const done: JobDone = { project, ok, summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check };
       for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }
     };
     proc.on('error', (e) => finish(null, e));

@@ -83,6 +83,11 @@ async function loadProjects() {
     head.append(name, tag);
     const task = document.createElement('small'); task.textContent = `${fecha(p.updatedAt)} — encargo: ${p.lastTask || 'ninguno'}`;
     const sum = document.createElement('div'); sum.textContent = p.lastSummary || 'Sin resultado todavía.'; sum.style.whiteSpace = 'pre-wrap';
+    if (p.check) { // revision automatica del sitio publicado
+      const chk = document.createElement('div'); chk.style.cssText = `margin-top:6px;white-space:pre-wrap;color:${p.check.ok ? '#36c275' : '#f2b33d'}`;
+      chk.textContent = p.check.ok ? `✓ Sitio revisado: ${p.check.pages} páginas, ${p.check.files} archivos, sin enlaces rotos${p.repaired ? ' (tras una corrección automática)' : ''}` : `⚠ La revisión encontró ${p.check.issues.length} problemas:\n- ${p.check.issues.join('\n- ')}`;
+      sum.append(chk);
+    }
     const row = document.createElement('div'); row.className = 'row';
     if (p.url) { const a = document.createElement('a'); a.href = p.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Abrir sitio'; row.append(a); }
     const dl = document.createElement('a'); dl.href = `./owner/projects/${p.slug}/descargar`; dl.textContent = 'Descargar código'; row.append(dl);
