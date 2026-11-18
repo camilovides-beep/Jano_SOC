@@ -62,6 +62,32 @@ export class OwnerController {
   @Get('usage')
   async usageDays(@Req() req: Request) { this.require(req); return { days: await this.usage.days(30) }; }
 
+  // ---- panel: cifras generales, conversaciones y encargos ----
+  @Get('summary')
+  async summary(@Req() req: Request) {
+    this.require(req);
+    const [stats, usage] = await Promise.all([this.leads.stats(30), this.usage.days(30)]);
+    const projects = this.workshop.list();
+    return { db: this.leads.dbKind, stats, usage, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
+  }
+
+  @Get('conversations')
+  async conversations(@Req() req: Request) { this.require(req); return { conversations: await this.leads.conversations(200) }; }
+
+  @Get('conversations/:id')
+  async conversation(@Req() req: Request, @Param('id') id: string) {
+    this.require(req);
+    const c = await this.leads.conversation(Number(id));
+    if (!c) throw new HttpException({ error: 'no_existe' }, 404);
+    return c;
+  }
+
+  @Delete('conversations/:id')
+  async removeConversation(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.leads.removeConversation(Number(id)) }; }
+
+  @Get('jobs')
+  async jobs(@Req() req: Request) { this.require(req); return { jobs: await this.workshop.jobs(100) }; }
+
   // ---- interesados (solo desde un dispositivo registrado) ----
   @Get('leads')
   async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: await this.leads.list() }; }

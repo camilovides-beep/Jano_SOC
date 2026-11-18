@@ -24,6 +24,9 @@ export class LeadsService {
   private readonly log = new Logger(LeadsService.name);
   constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService) {}
 
+  /** Donde se estan guardando los datos ('postgres' o 'sqlite'), para mostrarlo en el panel. */
+  get dbKind() { return this.db.kind; }
+
   /** Guarda una conversacion terminada: llamada de WhatsApp ('llamada') o conversacion del sitio ('sitio'). */
   async logConversation(kind: 'llamada' | 'sitio', who: string, seconds: number, lines: string[]) {
     try {
@@ -36,7 +39,7 @@ export class LeadsService {
   }
   /** Conversaciones para el panel, sin la transcripcion (se pide aparte). */
   conversations(limit = 100): Promise<Omit<Conversation, 'transcript'>[]> {
-    return this.db.query('SELECT id, at, kind, who, seconds, turns FROM conversations ORDER BY id DESC LIMIT $1', [Math.min(500, Math.max(1, limit))]) as any;
+    return this.db.query('SELECT id, at, kind, who, seconds, turns FROM conversations ORDER BY at DESC LIMIT $1', [Math.min(500, Math.max(1, limit))]) as any;
   }
   async conversation(id: number): Promise<Conversation | undefined> { return (await this.db.query<Conversation>('SELECT id, at, kind, who, seconds, turns, transcript FROM conversations WHERE id = $1', [id]))[0]; }
   async removeConversation(id: number): Promise<boolean> { return (await this.db.query('DELETE FROM conversations WHERE id = $1 RETURNING id', [id])).length > 0; }

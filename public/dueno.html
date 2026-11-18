@@ -4,64 +4,140 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Dispositivos de Javier</title>
+  <title>Panel de Javier</title>
   <link rel="stylesheet" href="./css/style.css">
   <style>
+    /* Colores de los graficos: paleta validada para fondo oscuro (azul, naranja, agua, amarillo). */
+    :root { --panel: #171c23; --line: #2b3440; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; }
     html, body { overflow: auto; }
-    .lead { display: grid; gap: 8px; align-items: start; }
-    .lead .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .lead select, .lead textarea { font: inherit; padding: 8px; border-radius: 10px; border: 1px solid #2b3440; background: #171c23; color: var(--fg); }
-    .lead textarea { width: 100%; min-height: 44px; resize: vertical; }
-    .tag { background: rgba(79, 140, 255, .25); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
-    main { max-width: 620px; margin: 0 auto; padding: 28px 18px 60px; display: grid; gap: 18px; }
-    .card { background: #171c23; border-radius: 16px; padding: 22px; display: grid; gap: 12px; }
-    .card h1, .card h2 { margin: 0; font-size: 20px; }
+    main { max-width: 1080px; margin: 0 auto; padding: 22px 16px 70px; display: grid; gap: 16px; }
+    .top { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .top h1 { margin: 0; font-size: 22px; }
+    a { color: var(--accent); }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tabs button { background: transparent; color: var(--muted); padding: 9px 14px; min-height: 40px; border: 1px solid var(--line); font-weight: 600; }
+    .tabs button[aria-selected="true"] { background: var(--panel); color: var(--fg); border-color: var(--accent); }
+    .card { background: var(--panel); border-radius: 16px; padding: 20px; display: grid; gap: 12px; min-width: 0; }
+    .card h2 { margin: 0; font-size: 17px; }
     .card p { margin: 0; color: var(--muted); }
-    input { font: inherit; padding: 13px; border-radius: 12px; border: 1px solid #2b3440; background: #0f1318; color: var(--fg); width: 100%; }
-    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-    li { display: flex; gap: 10px; justify-content: space-between; align-items: center; background: #0f1318; border-radius: 12px; padding: 12px 14px; }
-    li small { color: var(--muted); display: block; }
-    li button { padding: 8px 12px; min-height: 36px; background: #5a2630; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .grid.charts { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
+    .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .tile { background: var(--panel); border-radius: 14px; padding: 16px; }
+    .tile b { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .tile span { color: var(--muted); font-size: 14px; }
+    input, select, textarea { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: #0f1318; color: var(--fg); }
+    textarea { width: 100%; min-height: 44px; resize: vertical; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .filters input { flex: 1; min-width: 180px; }
+    ul.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    ul.list > li { background: #0f1318; border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row.between { justify-content: space-between; }
+    small, .muted { color: var(--muted); }
+    .tag { background: rgba(79, 140, 255, .22); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
+    button.small { padding: 7px 12px; min-height: 34px; font-size: 14px; }
+    button.danger { background: #5a2630; }
     .msg { min-height: 1.4em; color: #ff8a8a; }
     .ok { color: var(--ok); }
-    a { color: var(--accent); }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 14px/1.5 system-ui, sans-serif; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid rgba(128, 128, 128, .22); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .scroll { overflow-x: auto; }
+    /* Graficos */
+    .chart { position: relative; }
+    .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart .axis { fill: var(--muted); font-size: 11px; }
+    .chart .gridline { stroke: rgba(255, 255, 255, .08); }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+    .tip { position: absolute; pointer-events: none; background: #0b0e12; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; white-space: nowrap; z-index: 3; transform: translate(-50%, -100%); }
+    .tip[hidden] { display: none; }
+    .hbar { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: 14px; }
+    .hbar div { height: 12px; border-radius: 0 4px 4px 0; background: var(--s1); min-width: 2px; }
+    .hbar b { font-variant-numeric: tabular-nums; font-weight: 600; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <main>
-    <section class="card" id="register">
-      <h1>Registrar este dispositivo</h1>
-      <p>Solo los dispositivos registrados pueden usar las herramientas privadas del avatar. Escribe tu clave una vez; este dispositivo queda autorizado.</p>
-      <form id="form">
-        <div style="display:grid;gap:10px">
-          <input id="name" placeholder="Nombre (ej. Mi iPhone)" maxlength="60" required>
-          <input id="secret" type="password" placeholder="Clave del dueño" autocomplete="off" required>
-          <button type="submit">Registrar</button>
-        </div>
+    <section class="card" id="register" hidden>
+      <h2>Registrar este dispositivo</h2>
+      <p>Solo los dispositivos registrados pueden ver este panel y usar las herramientas privadas del avatar. Escribe tu clave una vez; este dispositivo queda autorizado.</p>
+      <form id="form" style="display:grid;gap:10px;max-width:420px">
+        <input id="name" placeholder="Nombre (ej. Mi iPhone)" maxlength="60" required>
+        <input id="secret" type="password" placeholder="Clave del dueño" autocomplete="off" required>
+        <button type="submit">Registrar</button>
       </form>
       <p class="msg" id="msg" role="alert"></p>
     </section>
-    <section class="card" id="devices" hidden>
-      <h2>Dispositivos autorizados</h2>
-      <p id="me" class="ok"></p>
-      <ul id="list"></ul>
-      <p><a href="./">Ir al avatar</a></p>
-    </section>
-    <section class="card" id="projects" hidden>
-      <h2>Taller de programación <small id="project-count"></small></h2>
-      <p id="project-progress"></p>
-      <ul id="project-list"></ul>
-    </section>
-    <section class="card" id="usage" hidden>
-      <h2>Consumo por día</h2>
-      <p>Medidas propias del avatar (no la factura de cada proveedor). Sirven para ver qué pesa más.</p>
-      <div style="overflow-x:auto"><table id="usage-table" style="width:100%;border-collapse:collapse;font-size:14px;white-space:nowrap"></table></div>
-    </section>
-    <section class="card" id="leads" hidden>
-      <h2>Interesados <small id="lead-count"></small></h2>
-      <p>Personas que le dejaron sus datos al avatar. <a href="./owner/leads.csv">Descargar CSV</a></p>
-      <ul id="lead-list"></ul>
-    </section>
+
+    <div id="panel" hidden>
+      <div style="display:grid;gap:16px">
+        <div class="top">
+          <h1>Panel de Javier</h1>
+          <span class="muted"><span id="db"></span> · <a href="./">Ir al avatar</a></span>
+        </div>
+        <nav class="tabs" role="tablist" id="tabs">
+          <button role="tab" data-tab="resumen">Resumen</button>
+          <button role="tab" data-tab="interesados">Interesados</button>
+          <button role="tab" data-tab="conversaciones">Conversaciones</button>
+          <button role="tab" data-tab="consumo">Consumo</button>
+          <button role="tab" data-tab="taller">Taller</button>
+          <button role="tab" data-tab="dispositivos">Dispositivos</button>
+        </nav>
+
+        <section data-view="resumen" style="display:grid;gap:16px">
+          <div class="tiles" id="tiles"></div>
+          <div class="card"><h2>Interesados por día, últimos 30 días</h2><div class="chart" id="ch-leads"></div></div>
+          <div class="grid">
+            <div class="card"><h2>Por estado</h2><div id="by-status" style="display:grid;gap:8px"></div></div>
+            <div class="card"><h2>Por origen</h2><div id="by-source" style="display:grid;gap:8px"></div></div>
+            <div class="card"><h2>Por interés</h2><div id="by-interest" style="display:grid;gap:8px"></div></div>
+          </div>
+        </section>
+
+        <section data-view="interesados" class="card" hidden>
+          <div class="row between"><h2>Interesados <small id="lead-count"></small></h2><a href="./owner/leads.csv">Descargar CSV</a></div>
+          <div class="filters">
+            <input id="lead-q" type="search" placeholder="Buscar por nombre, contacto o detalle">
+            <select id="lead-status"><option value="">Todos los estados</option></select>
+            <select id="lead-source"><option value="">Todos los orígenes</option></select>
+          </div>
+          <ul class="list" id="lead-list"></ul>
+        </section>
+
+        <section data-view="conversaciones" class="card" hidden>
+          <h2>Conversaciones <small id="conv-count"></small></h2>
+          <p id="conv-note"></p>
+          <ul class="list" id="conv-list"></ul>
+        </section>
+
+        <section data-view="consumo" style="display:grid;gap:16px" hidden>
+          <p class="muted">Medidas propias del avatar, no la factura de cada proveedor. Sirven para ver qué pesa más y cómo cambia.</p>
+          <div class="grid charts">
+            <div class="card"><h2>Escucha, minutos por día</h2><div class="chart" id="ch-listen"></div></div>
+            <div class="card"><h2>Tokens leídos por el modelo, por día</h2><div class="chart" id="ch-tokens"></div></div>
+            <div class="card"><h2>Voz, caracteres por día</h2><div class="chart" id="ch-voice"></div></div>
+            <div class="card"><h2>Claude Code, minutos por día</h2><div class="chart" id="ch-claude"></div></div>
+          </div>
+          <div class="card"><h2>Detalle por día</h2><div class="scroll"><table id="usage-table"></table></div></div>
+        </section>
+
+        <section data-view="taller" style="display:grid;gap:16px" hidden>
+          <div class="card"><h2>Proyectos <small id="project-count"></small></h2><p id="project-progress"></p><ul class="list" id="project-list"></ul></div>
+          <div class="card"><h2>Historial de encargos</h2><div class="scroll"><table id="jobs-table"></table></div></div>
+        </section>
+
+        <section data-view="dispositivos" class="card" hidden>
+          <h2>Dispositivos autorizados</h2>
+          <p id="me" class="ok"></p>
+          <ul class="list" id="list"></ul>
+        </section>
+      </div>
+    </div>
   </main>
   <script type="module" src="./js/dueno.js"></script>
 </body>
