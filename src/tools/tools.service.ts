@@ -19,7 +19,7 @@ export const asData = (source: string, text: string) => `<<<DATOS de ${source}: 
 /** Herramientas cuyo resultado completo es contenido de terceros. */
 const UNTRUSTED: Record<string, string> = { ver_interesados: 'el formulario y las conversaciones públicas', estado_taller: 'los informes de Claude Code', mostrar_proyecto: 'los informes de Claude Code' };
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
-export interface ToolContext { origin: string; music?: MusicState; }
+export interface ToolContext { origin: string; music?: MusicState; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
@@ -134,11 +134,11 @@ export class ToolsService {
           },
           required: ['nombre', 'contacto', 'interes', 'autoriza'],
         },
-        run: async (args) => {
+        run: async (args, ctx) => {
           if (args.autoriza !== true) return 'No se guardó: falta la autorización de la persona. Pregúntale si autoriza guardar sus datos.';
           const nombre = String(args.nombre ?? '').trim(), contacto = String(args.contacto ?? '').trim();
           if (nombre.length < 2 || contacto.length < 5) return 'No se guardó: falta el nombre o el dato de contacto. Pídeselo.';
-          const lead = this.leads.add({ name: nombre, contact: contacto, company: String(args.empresa ?? ''), interest: String(args.interes ?? 'otro'), detail: String(args.detalle ?? '') });
+          const lead = await this.leads.add({ name: nombre, contact: contacto, company: String(args.empresa ?? ''), interest: String(args.interes ?? 'otro'), detail: String(args.detalle ?? ''), source: ctx.source ?? 'voz' });
           const wa = await this.leads.announce(lead);
           const extra = wa === '' ? ' Además se le acaba de enviar un mensaje de Javier por WhatsApp a ese número: dile que lo revise y que puede responder por ahí.' : '';
           return `Guardado con el número ${lead.id}.${extra} Dile que Javier lo contactará pronto y agradécele.`;
@@ -149,8 +149,8 @@ export class ToolsService {
       ver_interesados: {
         description: 'Lista las personas interesadas en los servicios de Javier que el avatar ha registrado, de la más reciente a la más antigua.',
         parameters: { type: 'object', properties: { cuantos: { type: 'number', description: 'Cuántos traer (por defecto 10).' } }, required: [] },
-        run: (args) => {
-          const rows = this.leads.list(Math.min(30, Math.max(1, Number(args.cuantos) || 10)));
+        run: async (args) => {
+          const rows = await this.leads.list(Math.min(30, Math.max(1, Number(args.cuantos) || 10)));
           if (!rows.length) return 'Todavía no hay interesados registrados.';
           return rows.map((l) => `#${l.id} ${l.created_at.slice(0, 10)} | ${l.name}${l.company ? ' (' + l.company + ')' : ''} | ${l.contact} | ${l.interest} | ${l.status} | ${l.detail}`).join('\n');
         },
@@ -159,8 +159,8 @@ export class ToolsService {
     this.ownerTools.consumo = {
       description: 'Dice cuánto ha consumido el avatar por día: minutos de escucha, tokens del modelo, caracteres de voz, búsquedas y encargos de Claude Code. Úsala cuando Javier pregunte por el consumo, el gasto o cuánto ha usado.',
       parameters: { type: 'object', properties: { dias: { type: 'number', description: 'Cuántos días hacia atrás (por defecto 7).' } }, required: [] },
-      run: (args) => {
-        const rows = usage.days(Math.min(30, Math.max(1, Number(args.dias) || 7)));
+      run: async (args) => {
+        const rows = await usage.days(Math.min(30, Math.max(1, Number(args.dias) || 7)));
         if (!rows.length) return 'Todavía no hay consumo registrado.';
         return rows.map((d) => usage.describe(d)).join('\n') + '\nSon medidas propias del avatar, no la factura de cada proveedor. Resúmelo en dos o tres frases: qué día pesó más y en qué; no leas todas las cifras. El detalle está en la página del dueño.';
       },
@@ -182,16 +182,16 @@ export class ToolsService {
         const parts: string[] = [`Fecha y hora: ${new Intl.DateTimeFormat('es-CO', { timeZone: cfg.timezone, dateStyle: 'full', timeStyle: 'short' }).format(now)}.`];
         let scene: string | undefined;
         try { const w = await this.tools.clima.run({}, ctx); if (typeof w === 'string') parts.push(w); else { parts.push(w.text); scene = w.scene; } } catch { parts.push('Clima: no se pudo consultar.'); }
-        const leads = this.leads.leadsSince(iso);
+        const leads = await this.leads.leadsSince(iso);
         parts.push(leads.length
           ? `Interesados nuevos (${leads.length}): ` + asData('el formulario y las conversaciones públicas', leads.slice(0, 6).map((l) => `${l.name}${l.company ? ' de ' + l.company : ''}, ${l.interest.replace(/_/g, ' ')}, ${when(l.created_at)}${l.detail ? ': ' + l.detail.slice(0, 120) : ''}`).join(' | '))
           : 'Interesados nuevos: ninguno.');
-        parts.push(`Interesados que siguen en estado "nuevo" (sin contactar): ${this.leads.countByStatus('nuevo')}.`);
-        const calls = this.leads.callsSince(iso);
+        parts.push(`Interesados que siguen en estado "nuevo" (sin contactar): ${await this.leads.countByStatus('nuevo')}.`);
+        const calls = await this.leads.callsSince(iso);
         parts.push(calls.length
           ? `Llamadas de WhatsApp atendidas (${calls.length}): ` + asData('las llamadas de WhatsApp', calls.slice(0, 6).map((c) => `${c.who}, ${when(c.at)}, ${c.seconds} s${c.transcript ? ', dijo: ' + (c.transcript.split('\n').find((l) => l.startsWith('🧑')) ?? '').slice(2, 140) : ''}`).join(' | '))
           : 'Llamadas de WhatsApp atendidas: ninguna registrada.');
-        const yesterday = usage.days(2).find((d) => d.day === day(new Date(now.getTime() - 24 * 3600_000)));
+        const yesterday = (await usage.days(2)).find((d) => d.day === day(new Date(now.getTime() - 24 * 3600_000)));
         if (yesterday) parts.push(`Consumo de ayer: ${usage.describe(yesterday)} Menciónalo en una frase solo si algo llama la atención.`);
         if (workshop.enabled) {
           const list = workshop.list(), pend = list.filter((p) => p.unseen), bad = list.filter((p) => p.status === 'error');

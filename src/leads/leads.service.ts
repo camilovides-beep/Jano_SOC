@@ -1,8 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { ConfigService } from '../config/config.service';
+import { DbService } from '../db/db.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 export const INTERESTS = ['chatbots', 'agentes_de_voz', 'bots_de_whatsapp', 'automatizacion', 'dashboards', 'despliegue_y_servidores', 'desarrollo_de_software', 'otro'] as const;
@@ -11,79 +9,81 @@ export const STATUSES = ['nuevo', 'contactado', 'en_conversacion', 'cliente', 'd
 export interface Lead {
   id: number; created_at: string; name: string; contact: string; company: string;
   interest: string; detail: string; status: string; notes: string;
+  source: string;   // de donde llego: voz, llamada, formulario:<proyecto>
 }
-export interface NewLead { name: string; contact: string; company?: string; interest: string; detail?: string; }
+export interface Conversation { id: number; at: string; kind: string; who: string; seconds: number; turns: number; transcript: string; }
+export interface NewLead { name: string; contact: string; company?: string; interest: string; detail?: string; source?: string; }
 
 const clip = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /**
- * Base de datos de personas interesadas en los servicios de Javier (SQLite integrado en Node, sin dependencias).
- * El archivo vive en DATA_DIR (el mismo volumen que los dispositivos), asi sobrevive a los despliegues.
+ * Personas interesadas en los servicios de Javier y conversaciones atendidas. Los datos viven en la base (DbService).
  */
 @Injectable()
 export class LeadsService {
   private readonly log = new Logger(LeadsService.name);
-  private readonly db: DatabaseSync;
+  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService) {}
 
-  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService) {
-    mkdirSync(cfg.dataDir, { recursive: true });
-    this.db = new DatabaseSync(join(cfg.dataDir, 'leads.db'));
-    this.db.exec(`CREATE TABLE IF NOT EXISTS leads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      created_at TEXT NOT NULL,
-      name TEXT NOT NULL,
-      contact TEXT NOT NULL,
-      company TEXT NOT NULL DEFAULT '',
-      interest TEXT NOT NULL,
-      detail TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'nuevo',
-      notes TEXT NOT NULL DEFAULT ''
-    )`);
-    // Llamadas de WhatsApp atendidas por el avatar (para el resumen del dia; la grabacion sigue yendo a Telegram).
-    this.db.exec(`CREATE TABLE IF NOT EXISTS calls (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, who TEXT NOT NULL, seconds INTEGER NOT NULL, turns INTEGER NOT NULL, transcript TEXT NOT NULL DEFAULT ''
-    )`);
-  }
-
-  logCall(who: string, seconds: number, lines: string[]) {
+  /** Guarda una conversacion terminada: llamada de WhatsApp ('llamada') o conversacion del sitio ('sitio'). */
+  async logConversation(kind: 'llamada' | 'sitio', who: string, seconds: number, lines: string[]) {
     try {
-      this.db.prepare('INSERT INTO calls (at, who, seconds, turns, transcript) VALUES (?, ?, ?, ?, ?)')
-        .run(new Date().toISOString(), clip(who, 120), Math.round(seconds), lines.filter((l) => l.startsWith('🧑')).length, lines.join('\n').slice(0, 8000));
-    } catch (e) { this.log.warn(`no se pudo registrar la llamada: ${(e as Error).message}`); }
+      await this.db.query('INSERT INTO conversations (at, kind, who, seconds, turns, transcript) VALUES ($1, $2, $3, $4, $5, $6)',
+        [new Date().toISOString(), kind, clip(who, 120), Math.round(seconds), lines.filter((l) => l.startsWith('🧑')).length, lines.join('\n').slice(0, 12_000)]);
+    } catch (e) { this.log.warn(`no se pudo registrar la conversación: ${(e as Error).message}`); }
   }
-  callsSince(iso: string): { at: string; who: string; seconds: number; turns: number; transcript: string }[] {
-    return this.db.prepare('SELECT at, who, seconds, turns, transcript FROM calls WHERE at >= ? ORDER BY id DESC LIMIT 30').all(iso) as any[];
+  callsSince(iso: string): Promise<Conversation[]> {
+    return this.db.query<Conversation>(`SELECT id, at, kind, who, seconds, turns, transcript FROM conversations WHERE kind = 'llamada' AND at >= $1 ORDER BY id DESC LIMIT 30`, [iso]);
   }
-  leadsSince(iso: string): Lead[] { return this.db.prepare('SELECT * FROM leads WHERE created_at >= ? ORDER BY id DESC LIMIT 30').all(iso) as unknown as Lead[]; }
-  countByStatus(status: string): number { return Number((this.db.prepare('SELECT COUNT(*) AS n FROM leads WHERE status = ?').get(status) as any)?.n ?? 0); }
+  /** Conversaciones para el panel, sin la transcripcion (se pide aparte). */
+  conversations(limit = 100): Promise<Omit<Conversation, 'transcript'>[]> {
+    return this.db.query('SELECT id, at, kind, who, seconds, turns FROM conversations ORDER BY id DESC LIMIT $1', [Math.min(500, Math.max(1, limit))]) as any;
+  }
+  async conversation(id: number): Promise<Conversation | undefined> { return (await this.db.query<Conversation>('SELECT id, at, kind, who, seconds, turns, transcript FROM conversations WHERE id = $1', [id]))[0]; }
+  async removeConversation(id: number): Promise<boolean> { return (await this.db.query('DELETE FROM conversations WHERE id = $1 RETURNING id', [id])).length > 0; }
 
-  add(input: NewLead): Lead {
-    const lead = {
-      created_at: new Date().toISOString(), name: clip(input.name, 120), contact: clip(input.contact, 160),
-      company: clip(input.company, 120), interest: INTERESTS.includes(input.interest as any) ? input.interest : 'otro', detail: clip(input.detail, 800),
-    };
-    const r = this.db.prepare('INSERT INTO leads (created_at, name, contact, company, interest, detail) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(lead.created_at, lead.name, lead.contact, lead.company, lead.interest, lead.detail);
-    const saved = this.get(Number(r.lastInsertRowid))!;
-    this.log.log(`interesado #${saved.id} registrado (${saved.interest})`);
+  leadsSince(iso: string): Promise<Lead[]> { return this.db.query<Lead>('SELECT * FROM leads WHERE created_at >= $1 ORDER BY id DESC LIMIT 30', [iso]); }
+  async countByStatus(status: string): Promise<number> { return Number((await this.db.query('SELECT COUNT(*) AS n FROM leads WHERE status = $1', [status]))[0]?.n ?? 0); }
+
+  async add(input: NewLead): Promise<Lead> {
+    const row = [new Date().toISOString(), clip(input.name, 120), clip(input.contact, 160), clip(input.company, 120),
+      INTERESTS.includes(input.interest as any) ? input.interest : 'otro', clip(input.detail, 800), clip(input.source, 60)];
+    const [saved] = await this.db.query<Lead>('INSERT INTO leads (created_at, name, contact, company, interest, detail, source) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', row);
+    this.log.log(`interesado #${saved.id} registrado (${saved.interest}${saved.source ? ', ' + saved.source : ''})`);
     return saved;
   }
 
-  get(id: number): Lead | undefined { return this.db.prepare('SELECT * FROM leads WHERE id = ?').get(id) as unknown as Lead | undefined; }
-  list(limit = 200): Lead[] { return this.db.prepare('SELECT * FROM leads ORDER BY id DESC LIMIT ?').all(limit) as unknown as Lead[]; }
-  update(id: number, patch: { status?: string; notes?: string }): boolean {
-    const cur = this.get(id); if (!cur) return false;
+  async get(id: number): Promise<Lead | undefined> { return (await this.db.query<Lead>('SELECT * FROM leads WHERE id = $1', [id]))[0]; }
+  list(limit = 200): Promise<Lead[]> { return this.db.query<Lead>('SELECT * FROM leads ORDER BY id DESC LIMIT $1', [limit]); }
+  async update(id: number, patch: { status?: string; notes?: string }): Promise<boolean> {
+    const cur = await this.get(id); if (!cur) return false;
     const status = STATUSES.includes(patch.status as any) ? patch.status! : cur.status;
     const notes = patch.notes === undefined ? cur.notes : clip(patch.notes, 1000);
-    this.db.prepare('UPDATE leads SET status = ?, notes = ? WHERE id = ?').run(status, notes, id);
+    await this.db.query('UPDATE leads SET status = $1, notes = $2 WHERE id = $3', [status, notes, id]);
     return true;
   }
-  remove(id: number): boolean { return this.db.prepare('DELETE FROM leads WHERE id = ?').run(id).changes > 0; }
+  async remove(id: number): Promise<boolean> { return (await this.db.query('DELETE FROM leads WHERE id = $1 RETURNING id', [id])).length > 0; }
 
-  csv(): string {
+  async csv(): Promise<string> {
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const cols: (keyof Lead)[] = ['id', 'created_at', 'name', 'contact', 'company', 'interest', 'detail', 'status', 'notes'];
-    return [cols.join(','), ...this.list(10_000).map((l) => cols.map((c) => esc(l[c])).join(','))].join('\n');
+    const cols: (keyof Lead)[] = ['id', 'created_at', 'name', 'contact', 'company', 'interest', 'detail', 'status', 'notes', 'source'];
+    return [cols.join(','), ...(await this.list(10_000)).map((l) => cols.map((c) => esc(l[c])).join(','))].join('\n');
+  }
+
+  /** Cifras para el panel: totales, por estado, por interes, por origen y por dia (ultimos `days` dias, en la zona de Javier). */
+  async stats(days = 30) {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const group = (col: string) => this.db.query<{ k: string; n: number }>(`SELECT ${col} AS k, COUNT(*) AS n FROM leads GROUP BY ${col} ORDER BY n DESC`);
+    const [byStatus, byInterest, bySource, recent, convs] = await Promise.all([group('status'), group('interest'), group('source'),
+      this.db.query<{ created_at: string }>('SELECT created_at FROM leads WHERE created_at >= $1', [since]),
+      this.db.query<{ at: string; kind: string; seconds: number }>('SELECT at, kind, seconds FROM conversations WHERE at >= $1', [since])]);
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone });
+    const perDay: Record<string, { leads: number; llamadas: number; sitio: number }> = {};
+    for (let i = days - 1; i >= 0; i--) perDay[day.format(new Date(Date.now() - i * 86_400_000))] = { leads: 0, llamadas: 0, sitio: 0 };
+    for (const l of recent) { const d = perDay[day.format(new Date(l.created_at))]; if (d) d.leads++; }
+    for (const c of convs) { const d = perDay[day.format(new Date(c.at))]; if (d) d[c.kind === 'llamada' ? 'llamadas' : 'sitio']++; }
+    const n = (rows: { k: string; n: number }[]) => rows.map((r) => ({ k: r.k || 'sin dato', n: Number(r.n) }));
+    return { total: byStatus.reduce((a, r) => a + Number(r.n), 0), byStatus: n(byStatus), byInterest: n(byInterest), bySource: n(bySource),
+      days: Object.entries(perDay).map(([d, v]) => ({ day: d, ...v })), conversations: convs.length, talkSeconds: convs.reduce((a, c) => a + Number(c.seconds), 0) };
   }
 
   /** Texto del aviso de un interesado. */

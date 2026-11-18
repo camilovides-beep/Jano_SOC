@@ -11,7 +11,8 @@ import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
-import { MemoryService } from '../memory/memory.service';
+import { MemoryService, VisitorMemory } from '../memory/memory.service';
+import { LeadsService } from '../leads/leads.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { asData, ToolsService } from '../tools/tools.service';
 import { UsageService } from '../usage/usage.service';
@@ -69,6 +70,7 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
+  starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion
 }
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
@@ -192,7 +194,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly cfg: ConfigService, private readonly tts: ElevenLabsService,
     private readonly stt: DeepgramService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
-    private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService,
+    private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService, private readonly leads: LeadsService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -261,7 +263,10 @@ export class SessionGateway implements OnGatewayConnection {
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
         if (!s.owner && this.memory.valid(msg.visitor)) s.visitor = msg.visitor;
         if (internal && typeof msg.phone === 'string' && /^\+?\d{8,15}$/.test(msg.phone)) s.callerPhone = msg.phone;
-        clearTimeout(authTimer); this.start(client, s);
+        clearTimeout(authTimer);
+        if (s.starting) return; s.starting = true;
+        // La memoria del visitante se consulta en la base antes de saludar; si falla, se saluda como a alguien nuevo.
+        void (s.visitor ? this.memory.get(s.visitor) : Promise.resolve(null)).catch(() => null).then((known) => { if (client.readyState === client.OPEN) this.start(client, s, known); });
         return;
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
@@ -274,11 +279,10 @@ export class SessionGateway implements OnGatewayConnection {
     client.on('error', () => this.end(s));
   }
 
-  private start(client: WebSocket, s: Session) {
+  private start(client: WebSocket, s: Session, known: VisitorMemory | null) {
     s.ready = true; this.active++; this.usage.add('sesiones'); if (s.owner) this.usage.add('sesiones_dueno');
     if (s.owner && !s.callerPhone && this.music.enabled) s.music = this.music.newState();
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
-    const known = s.visitor ? this.memory.get(s.visitor) : null;
     const cardIds = this.cards.ids();
     const cardRules = cardIds.length
       ? `\nTarjetas en pantalla: si tu respuesta trata de uno de estos temas, agrega UNA etiqueta [c:tema] para mostrar su tarjeta: ${cardIds.filter((c) => c !== 'contacto').join(', ')}.` +
@@ -345,6 +349,12 @@ export class SessionGateway implements OnGatewayConnection {
     s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer);
     s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
     if (s.visitor && s.userTurns > 0) void this.remember(s);
+    // Conversaciones del sitio (solo si SAVE_CONVERSATIONS=1; las llamadas las guarda su propio controlador y las del dueño no se guardan).
+    if (this.cfg.saveConversations && !s.owner && !s.callerPhone && s.userTurns > 0) {
+      const lines = s.history.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+        .map((m) => `${m.role === 'user' ? '🧑' : '🤖'} ${String(m.content).replace(TAG_ANY, '').replace(/\n\n\(Nota del sistema:[\s\S]*$/, '').trim()}`);
+      void this.leads.logConversation('sitio', 'Visitante del sitio', (Date.now() - s.startedAt) / 1000, lines);
+    }
     for (const t of s.timers) { clearTimeout(t); clearInterval(t); }
     this.log.log(`sesion #${s.n} cerrada (${this.active}/${this.cfg.maxSessions})`);
   }
@@ -556,7 +566,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin, music: s.music });
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin, music: s.music, source: s.callerPhone ? 'llamada' : 'voz' });
             result = out.text; if (out.untrusted) turn.tainted = true;
             if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) s.leads++;
             // Efectos que dependen del dato consultado: fondo del clima, billetes del dolar.

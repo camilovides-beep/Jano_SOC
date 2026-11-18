@@ -60,27 +60,27 @@ export class OwnerController {
 
   // ---- consumo por dia de cada proveedor ----
   @Get('usage')
-  usageDays(@Req() req: Request) { this.require(req); return { days: this.usage.days(30) }; }
+  async usageDays(@Req() req: Request) { this.require(req); return { days: await this.usage.days(30) }; }
 
   // ---- interesados (solo desde un dispositivo registrado) ----
   @Get('leads')
-  listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: this.leads.list() }; }
+  async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: await this.leads.list() }; }
 
   @Get('leads.csv')
-  csv(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async csv(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     this.require(req);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="interesados.csv"');
-    return '\ufeff' + this.leads.csv();
+    return '\ufeff' + (await this.leads.csv());
   }
 
   @Patch('leads/:id')
-  updateLead(@Req() req: Request, @Param('id') id: string, @Body() body: { status?: string; notes?: string }) {
-    this.require(req); return { ok: this.leads.update(Number(id), body ?? {}) };
+  async updateLead(@Req() req: Request, @Param('id') id: string, @Body() body: { status?: string; notes?: string }) {
+    this.require(req); return { ok: await this.leads.update(Number(id), body ?? {}) };
   }
 
   @Delete('leads/:id')
-  removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: this.leads.remove(Number(id)) }; }
+  async removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.leads.remove(Number(id)) }; }
 
   // ---- taller de programacion (solo desde un dispositivo registrado) ----
   @Get('projects')

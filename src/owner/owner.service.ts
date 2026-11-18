@@ -1,8 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { ConfigService } from '../config/config.service';
+import { DbService } from '../db/db.service';
 
 export interface Device { id: string; name: string; createdAt: string; lastSeen: string; }
 
@@ -14,27 +13,34 @@ export const OWNER_COOKIE = 'minijavi_owner';
  * asi se puede revocar uno sin cambiar la clave. Si OWNER_SECRET esta vacio, el modo dueño queda desactivado.
  */
 @Injectable()
-export class OwnerService {
+export class OwnerService implements OnModuleInit {
   private readonly log = new Logger(OwnerService.name);
-  private readonly file: string;
   private readonly key: Buffer;
   private devices: Device[] = [];
   private readonly fails = new Map<string, { count: number; until: number }>();
   private recent: number[] = [];
   readonly enabled: boolean;
 
-  constructor(private readonly cfg: ConfigService) {
+  constructor(private readonly cfg: ConfigService, private readonly db: DbService) {
     this.enabled = cfg.ownerSecret.length >= 16;
     if (cfg.ownerSecret && !this.enabled) this.log.warn('OWNER_SECRET tiene menos de 16 caracteres: el modo dueño queda desactivado');
     this.key = createHash('sha256').update(`minijavi-owner:${cfg.ownerSecret}`).digest();
-    this.file = join(cfg.dataDir, 'devices.json');
-    try { if (existsSync(this.file)) this.devices = JSON.parse(readFileSync(this.file, 'utf8')); } catch { this.devices = []; }
   }
 
-  private save() {
-    try { mkdirSync(this.cfg.dataDir, { recursive: true }); writeFileSync(this.file, JSON.stringify(this.devices, null, 2)); }
-    catch (e) { this.log.error(`No se pudo guardar la lista de dispositivos: ${(e as Error).message}`); }
+  /** La lista de dispositivos se carga de la base al arrancar y se mantiene en memoria (se consulta en cada peticion). */
+  async onModuleInit() {
+    const rows = await this.db.query<{ id: string; name: string; created_at: string; last_seen: string }>('SELECT id, name, created_at, last_seen FROM devices ORDER BY created_at');
+    this.devices = rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at, lastSeen: r.last_seen }));
+    // El ultimo uso cambia en cada peticion: se guarda cada cierto tiempo, no cada vez.
+    setInterval(() => { for (const d of this.devices) if (d.lastSeen !== this.savedSeen.get(d.id)) this.store(d); }, 60_000).unref();
   }
+  private readonly savedSeen = new Map<string, string>();
+  private store(d: Device) {
+    this.savedSeen.set(d.id, d.lastSeen);
+    void this.db.query('INSERT INTO devices (id, name, created_at, last_seen) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET name = excluded.name, last_seen = excluded.last_seen', [d.id, d.name, d.createdAt, d.lastSeen])
+      .catch((e) => this.log.error(`No se pudo guardar el dispositivo: ${(e as Error).message}`));
+  }
+
   private sign(payload: string) { return createHmac('sha256', this.key).update(payload).digest('base64url'); }
 
   /** Segundos que debe esperar esta IP antes de volver a intentar (0 = puede intentar). */
@@ -61,7 +67,7 @@ export class OwnerService {
     this.fails.delete(ip);
     const now = new Date().toISOString();
     const device: Device = { id: randomBytes(12).toString('hex'), name: (name || 'Dispositivo').slice(0, 60), createdAt: now, lastSeen: now };
-    this.devices.push(device); this.save();
+    this.devices.push(device); this.store(device);
     const exp = Date.now() + this.cfg.ownerDays * 86_400_000;
     const payload = `${device.id}.${exp}`;
     this.log.log(`dispositivo registrado: ${device.name}`);
@@ -87,7 +93,10 @@ export class OwnerService {
   revoke(id: string): boolean {
     const n = this.devices.length;
     this.devices = this.devices.filter((d) => d.id !== id);
-    if (this.devices.length !== n) { this.save(); return true; }
+    if (this.devices.length !== n) {
+      void this.db.query('DELETE FROM devices WHERE id = $1', [id]).catch((e) => this.log.error(`No se pudo borrar el dispositivo: ${(e as Error).message}`));
+      return true;
+    }
     return false;
   }
   get maxAgeSeconds() { return this.cfg.ownerDays * 86_400; }

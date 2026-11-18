@@ -1,8 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { ConfigService } from '../config/config.service';
+import { DbService } from '../db/db.service';
 
 /** Lo que se mide. La unidad va en el nombre: _s segundos, _in/_out/_cache tokens, _chars caracteres, _usd dolares. */
 export const USAGE_KEYS = [
@@ -18,26 +16,22 @@ export type UsageDay = { day: string } & Partial<Record<UsageKey, number>> & { e
 
 /**
  * Consumo por dia de cada proveedor (pedido por Javier el 2026-11-18: saber adonde se va el gasto antes de optimizar).
- * Se acumula en memoria y se guarda cada 20 s en DATA_DIR/uso.db; asi contar cada trama de audio no escribe en disco.
+ * Se acumula en memoria y se guarda cada 20 s en la tabla `uso`; asi contar cada trama de audio no escribe en la base.
  * Son medidas propias, no la factura: sirven para comparar dias y ver que pesa mas.
  */
 @Injectable()
 export class UsageService implements OnModuleDestroy {
   private readonly log = new Logger(UsageService.name);
-  private readonly db: DatabaseSync;
   private readonly pending = new Map<string, number>();
   private readonly timer: NodeJS.Timeout;
   private readonly dayFmt: Intl.DateTimeFormat;
 
-  constructor(private readonly cfg: ConfigService) {
-    mkdirSync(cfg.dataDir, { recursive: true });
-    this.db = new DatabaseSync(join(cfg.dataDir, 'uso.db'));
-    this.db.exec('CREATE TABLE IF NOT EXISTS uso (day TEXT NOT NULL, key TEXT NOT NULL, value REAL NOT NULL DEFAULT 0, PRIMARY KEY (day, key))');
+  constructor(private readonly cfg: ConfigService, private readonly db: DbService) {
     this.dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: cfg.timezone });
-    this.timer = setInterval(() => this.flush(), 20_000);
+    this.timer = setInterval(() => void this.flush(), 20_000);
     this.timer.unref();
   }
-  onModuleDestroy() { clearInterval(this.timer); this.flush(); }
+  async onModuleDestroy() { clearInterval(this.timer); await this.flush(); }
 
   add(key: UsageKey, n = 1) {
     if (!Number.isFinite(n) || n <= 0) return;
@@ -45,22 +39,23 @@ export class UsageService implements OnModuleDestroy {
     this.pending.set(k, (this.pending.get(k) ?? 0) + n);
   }
 
-  flush() {
+  async flush() {
     if (!this.pending.size) return;
-    try {
-      const stmt = this.db.prepare('INSERT INTO uso (day, key, value) VALUES (?, ?, ?) ON CONFLICT(day, key) DO UPDATE SET value = value + excluded.value');
-      for (const [k, v] of this.pending) { const [day, key] = k.split('|'); stmt.run(day, key, v); }
-      this.pending.clear();
-    } catch (e) { this.log.warn(`no se pudo guardar el consumo: ${(e as Error).message}`); }
+    const batch = [...this.pending]; this.pending.clear();
+    for (const [k, v] of batch) {
+      const [day, key] = k.split('|');
+      try { await this.db.query('INSERT INTO uso (day, key, value) VALUES ($1, $2, $3) ON CONFLICT (day, key) DO UPDATE SET value = uso.value + excluded.value', [day, key, v]); }
+      catch (e) { this.pending.set(k, (this.pending.get(k) ?? 0) + v); this.log.warn(`no se pudo guardar el consumo: ${(e as Error).message}`); return; } // se reintenta en el siguiente volcado
+    }
   }
 
   /** Ultimos `days` dias con datos, del mas reciente al mas antiguo. */
-  days(days = 14): UsageDay[] {
-    this.flush();
+  async days(days = 14): Promise<UsageDay[]> {
+    await this.flush();
     const since = this.dayFmt.format(new Date(Date.now() - (Math.min(90, Math.max(1, days)) - 1) * 86_400_000));
-    const rows = this.db.prepare('SELECT day, key, value FROM uso WHERE day >= ? ORDER BY day DESC').all(since) as { day: string; key: UsageKey; value: number }[];
+    const rows = await this.db.query<{ day: string; key: UsageKey; value: number }>('SELECT day, key, value FROM uso WHERE day >= $1 ORDER BY day DESC', [since]);
     const out = new Map<string, UsageDay>();
-    for (const r of rows) { const d = out.get(r.day) ?? { day: r.day }; d[r.key] = Math.round(r.value * 100) / 100; out.set(r.day, d); }
+    for (const r of rows) { const d = out.get(r.day) ?? { day: r.day }; d[r.key] = Math.round(Number(r.value) * 100) / 100; out.set(r.day, d); }
     const prices = this.cfg.usagePrices;
     for (const d of out.values()) {
       let usd = 0, any = false;

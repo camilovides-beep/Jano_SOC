@@ -71,7 +71,7 @@ export class SitesController {
     if (body?.autoriza !== true && body?.autoriza !== 'true' && body?.autoriza !== 'on') throw new HttpException({ ok: false, error: 'autorizacion' }, 400);
     if (name.length < 2 || contact.length < 5) throw new HttpException({ ok: false, error: 'datos' }, 400);
     if (!this.allowed(`ip:${ipOf(req)}`, 5) || !this.allowed('global', 60)) throw new HttpException({ ok: false, error: 'limite' }, 429);
-    const lead = this.leads.add({ name, contact, interest: 'otro', detail: `[Formulario del sitio "${project.name}"] ${message}`.trim() });
+    const lead = await this.leads.add({ name, contact, interest: 'otro', detail: `[Formulario del sitio "${project.name}"] ${message}`.trim(), source: `formulario:${slug}` });
     void this.leads.telegram(this.leads.message(lead)).catch(() => undefined);
     return { ok: true };
   }

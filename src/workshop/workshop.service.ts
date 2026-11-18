@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { DbService } from '../db/db.service';
 import { ChildProcess, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
@@ -66,10 +67,9 @@ Trabajas para Javier Hermosilla, que te da los encargos hablando con su avatar d
  * lleva el token de Claude Code, para que los comandos que ejecute no puedan leer las claves ni los datos del avatar.
  */
 @Injectable()
-export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy {
+export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly log = new Logger(WorkshopService.name);
   private readonly root: string;
-  private readonly file: string;
   private projects: Project[] = [];
   private job?: {
     slug: string; proc: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer: NodeJS.Timeout; cancelled?: boolean;
@@ -79,16 +79,20 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
   private lastEmit = 0; private emitTimer?: NodeJS.Timeout;
   private listeners: ((d: JobDone) => void)[] = [];
 
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService) {
     this.root = resolve(cfg.dataDir, 'proyectos');
-    this.file = resolve(cfg.dataDir, 'proyectos.json');
     if (!this.enabled) return;
     mkdirSync(this.root, { recursive: true });
     // El usuario del taller debe poder crear archivos aqui; lo demas de DATA_DIR queda solo para el avatar.
     if (cfg.tallerUser) try { chmodSync(this.root, 0o1777); } catch { /* volumen de otro dueño */ }
-    try { if (existsSync(this.file)) this.projects = JSON.parse(readFileSync(this.file, 'utf8')); } catch (e) { this.log.error(`No se pudo leer ${this.file}: ${(e as Error).message}`); }
-    for (const p of this.projects) if (p.status === 'trabajando') { p.status = 'error'; p.lastSummary = 'El servidor se reinició mientras trabajaba; el encargo quedó a medias.'; }
-    this.log.log(`taller activo: ${this.projects.length} proyectos${cfg.tallerUser ? `, usuario ${cfg.tallerUser}` : ' (sin usuario separado)'}`);
+  }
+
+  /** Los proyectos se cargan de la base al arrancar y se mantienen en memoria; cada cambio se guarda en la base. */
+  async onModuleInit() {
+    if (!this.enabled) return;
+    for (const r of await this.db.query<{ data: string }>('SELECT data FROM projects ORDER BY updated_at')) try { this.projects.push(JSON.parse(r.data)); } catch { /* registro dañado */ }
+    for (const p of this.projects) if (p.status === 'trabajando') { p.status = 'error'; p.lastSummary = 'El servidor se reinició mientras trabajaba; el encargo quedó a medias.'; this.save(p); }
+    this.log.log(`taller activo: ${this.projects.length} proyectos${this.cfg.tallerUser ? `, usuario ${this.cfg.tallerUser}` : ' (sin usuario separado)'}`);
   }
 
   /**
@@ -133,12 +137,17 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
     for (const fn of this.progressListeners) try { fn(st); } catch { /* un oyente roto no detiene el trabajo */ }
   }
 
-  private save() { try { writeFileSync(this.file, JSON.stringify(this.projects, null, 1), { mode: 0o600 }); } catch (e) { this.log.error(`No se pudo guardar ${this.file}: ${(e as Error).message}`); } }
+  private save(p: Project) {
+    void this.db.query('INSERT INTO projects (slug, name, status, updated_at, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO UPDATE SET name = excluded.name, status = excluded.status, updated_at = excluded.updated_at, data = excluded.data',
+      [p.slug, p.name, p.status, p.updatedAt, JSON.stringify(p)]).catch((e) => this.log.error(`No se pudo guardar el proyecto ${p.slug}: ${(e as Error).message}`));
+  }
+  /** Encargos terminados, del mas reciente al mas antiguo (para el panel). */
+  jobs(limit = 100) { return this.db.query('SELECT id, slug, at, seconds, model, ok, repair, turns, usd, issues, task FROM jobs ORDER BY id DESC LIMIT $1', [Math.min(500, Math.max(1, limit))]); }
   list(): Project[] { return [...this.projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   dir(slug: string) { return join(this.root, slug); }
   hasSite(slug: string) { return existsSync(join(this.dir(slug), 'sitio', 'index.html')); }
   unseen(): Project[] { return this.projects.filter((p) => p.unseen); }
-  markSeen(slug: string) { const p = this.projects.find((x) => x.slug === slug); if (p?.unseen) { p.unseen = false; this.save(); } }
+  markSeen(slug: string) { const p = this.projects.find((x) => x.slug === slug); if (p?.unseen) { p.unseen = false; this.save(p); } }
 
   /** Busca un proyecto por nombre aproximado (lo dicta una persona: "la landing del cafe" -> "landing-cafe"). */
   find(name: string): Project | undefined {
@@ -216,7 +225,7 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
     const job: NonNullable<WorkshopService['job']> & { timedOut?: boolean } = { slug: project.slug, proc, t0, activity: 'empezando', spoken: 'está empezando', steps: 0, model: model.id, agents: new Set(), agentsTotal: 0, code: [], timer: setTimeout(() => { job.activity = 'tiempo agotado'; job.timedOut = true; proc.kill('SIGTERM'); setTimeout(() => proc.kill('SIGKILL'), 5000).unref(); }, this.cfg.tallerMaxMinutes * 60_000) };
     this.job = job;
     project.status = 'trabajando'; project.lastTask = task.slice(0, 500); project.updatedAt = new Date().toISOString(); project.jobs++; project.unseen = false; project.model = model.label;
-    this.save();
+    this.save(project);
     this.log.log(`taller: encargo en "${project.slug}" con ${model.label}${project.sessionId ? ' (retoma sesión)' : ''}: ${task.slice(0, 120)}`);
     this.emit(true);
 
@@ -267,16 +276,19 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
       // Prueba antes de "terminado": el servidor revisa el sitio publicado. Si hay fallos, se le devuelven a Claude Code
       // UNA vez (misma sesion) antes de avisarle a Javier; si siguen, el aviso lo dice.
       const check = this.hasSite(project.slug) ? checkSite(join(this.dir(project.slug), 'sitio')) : undefined;
+      void this.db.query('INSERT INTO jobs (slug, at, seconds, model, ok, repair, turns, usd, issues, task, summary) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+        [project.slug, new Date(t0).toISOString(), seconds, model.label, ok ? 1 : 0, repair ? 1 : 0, Number(result?.num_turns) || 0, Number(result?.total_cost_usd) || 0, check ? check.issues.length : null, task.slice(0, 2000), summary.slice(0, 4000)])
+        .catch((e) => this.log.error(`No se pudo guardar el encargo: ${(e as Error).message}`));
       project.check = check; project.repaired = repair;
       if (check && !check.ok) this.log.warn(`taller: la revisión de "${project.slug}" encontró ${check.issues.length} problemas${repair ? ' (tras la corrección)' : ''}`);
       if (ok && check && !check.ok && !repair && this.cfg.tallerAutoFix) {
         const original = project.lastTask;
-        project.lastSummary = summary.slice(0, 4000); this.save();
+        project.lastSummary = summary.slice(0, 4000); this.save(project);
         this.start(project.name, `La revisión automática del servidor encontró estos problemas en la carpeta sitio/ después de tu último trabajo:\n- ${check.issues.join('\n- ')}\nCorrígelos, vuelve a comprobar cada enlace y archivo, y termina con el informe completo del encargo original (no solo de esta corrección).`, formUrl, false, modelName, true);
-        if (this.job) { project.lastTask = original; this.save(); return; } // el aviso a Javier sale cuando termine la correccion
+        if (this.job) { project.lastTask = original; this.save(project); return; } // el aviso a Javier sale cuando termine la correccion
       }
       project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
-      this.save();
+      this.save(project);
       this.log.log(`taller: "${project.slug}" ${ok ? 'terminó' : 'NO terminó'} en ${seconds} s, ${job.steps} pasos${result?.num_turns ? `, ${result.num_turns} turnos` : ''}`);
       const done: JobDone = { project, ok, summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check };
       for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }

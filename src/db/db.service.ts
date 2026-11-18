@@ -1,0 +1,139 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { Pool, types } from 'pg';
+import { ConfigService } from '../config/config.service';
+
+/**
+ * Base de datos del avatar (pedido por Javier el 2026-11-18: una base "de verdad" en vez de archivos en DATA_DIR).
+ *  - Con DATABASE_URL: PostgreSQL (libreria `pg`, un Pool). Es lo que va en produccion.
+ *  - Sin DATABASE_URL: SQLite en DATA_DIR/leads.db, como antes. Sirve para desarrollo y como respaldo: si la variable
+ *    falta, el avatar sigue funcionando.
+ * Las consultas se escriben UNA vez, con $1, $2... usados en orden y una sola vez cada uno (en SQLite se cambian por ?).
+ * Las fechas son TIMESTAMPTZ en Postgres y texto ISO en SQLite; hacia el codigo siempre salen como texto ISO.
+ * La primera vez copia lo que habia en los archivos viejos (leads.db, uso.db, devices.json, proyectos.json) y NO los borra.
+ */
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS leads (
+     id {{ID}}, created_at {{TS}} NOT NULL, name TEXT NOT NULL, contact TEXT NOT NULL, company TEXT NOT NULL DEFAULT '',
+     interest TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'nuevo', notes TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '')`,
+  // Conversaciones: llamadas de WhatsApp y, si SAVE_CONVERSATIONS=1, las del sitio.
+  `CREATE TABLE IF NOT EXISTS conversations (
+     id {{ID}}, at {{TS}} NOT NULL, kind TEXT NOT NULL, who TEXT NOT NULL DEFAULT '', seconds INTEGER NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0, transcript TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', visits INTEGER NOT NULL DEFAULT 0, updated_at {{TS}} NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS uso (day TEXT NOT NULL, key TEXT NOT NULL, value {{REAL}} NOT NULL DEFAULT 0, PRIMARY KEY (day, key))`,
+  `CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at {{TS}} NOT NULL, last_seen {{TS}} NOT NULL)`,
+  // Proyectos del taller: los campos para consultar van en columnas y el registro completo en `data` (JSON).
+  `CREATE TABLE IF NOT EXISTS projects (slug TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, updated_at {{TS}} NOT NULL, data TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS jobs (
+     id {{ID}}, slug TEXT NOT NULL, at {{TS}} NOT NULL, seconds INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', ok INTEGER NOT NULL DEFAULT 0, repair INTEGER NOT NULL DEFAULT 0,
+     turns INTEGER NOT NULL DEFAULT 0, usd {{REAL}} NOT NULL DEFAULT 0, issues INTEGER, task TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
+  `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
+  `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,
+];
+
+@Injectable()
+export class DbService implements OnModuleDestroy {
+  private readonly log = new Logger(DbService.name);
+  readonly kind: 'postgres' | 'sqlite';
+  private pool?: Pool;
+  private lite?: DatabaseSync;
+  /** Termina cuando el esquema existe y lo viejo ya se copio. Toda consulta espera a esto. */
+  readonly ready: Promise<void>;
+
+  constructor(private readonly cfg: ConfigService) {
+    this.kind = cfg.databaseUrl ? 'postgres' : 'sqlite';
+    mkdirSync(cfg.dataDir, { recursive: true });
+    if (this.kind === 'postgres') {
+      types.setTypeParser(1184, (v) => new Date(v).toISOString()); // timestamptz -> texto ISO
+      types.setTypeParser(20, (v) => Number(v));                   // bigint (COUNT) -> numero
+      this.pool = new Pool({ connectionString: cfg.databaseUrl, max: 5, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 8000 });
+      this.pool.on('error', (e) => this.log.error(`PostgreSQL: ${e.message}`)); // conexion inactiva que se cayo: el Pool abre otra
+    } else {
+      this.lite = new DatabaseSync(join(cfg.dataDir, 'leads.db'));
+    }
+    this.ready = this.init();
+    this.ready.catch(() => { /* el error se informa al arrancar (onModuleInit de quien consulta) */ });
+  }
+
+  private async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+    if (this.pool) return (await this.pool.query(sql, params as any[])).rows as T[];
+    const stmt = this.lite!.prepare(sql.replace(/\$\d+/g, '?'));
+    const args = params.map((p) => (p === undefined ? null : typeof p === 'boolean' ? (p ? 1 : 0) : p)) as any[];
+    return (/^\s*(select|with)\b/i.test(sql) || /\breturning\b/i.test(sql) ? stmt.all(...args) : (stmt.run(...args), [])) as T[];
+  }
+
+  /** Consulta con parametros $1..$n. Devuelve las filas (para INSERT/UPDATE/DELETE, usar RETURNING si hacen falta). */
+  async query<T = Record<string, any>>(sql: string, params: unknown[] = []): Promise<T[]> {
+    await this.ready;
+    return this.raw<T>(sql, params);
+  }
+
+  private async init() {
+    const pg = this.kind === 'postgres';
+    const t0 = Date.now();
+    for (const ddl of SCHEMA) {
+      await this.raw(ddl.replace(/{{ID}}/g, pg ? 'INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT')
+        .replace(/{{TS}}/g, pg ? 'TIMESTAMPTZ' : 'TEXT').replace(/{{REAL}}/g, pg ? 'DOUBLE PRECISION' : 'REAL'));
+    }
+    if (!pg) { // SQLite de antes: la tabla leads ya existia sin la columna `source`
+      const cols = await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads']);
+      if (!cols.some((c) => c.name === 'source')) await this.raw(`ALTER TABLE leads ADD COLUMN source TEXT NOT NULL DEFAULT ''`);
+    }
+    await this.importLegacy();
+    this.log.log(`base de datos lista: ${pg ? 'PostgreSQL' : 'SQLite en DATA_DIR (sin DATABASE_URL)'} en ${Date.now() - t0} ms`);
+  }
+
+  /** Copia una sola vez lo que habia en los archivos de DATA_DIR. Los archivos quedan donde estaban, como respaldo. */
+  private async importLegacy() {
+    if ((await this.raw('SELECT value FROM meta WHERE key = $1', ['legacy_v1'])).length) return;
+    const pg = this.kind === 'postgres', dir = this.cfg.dataDir, n: Record<string, number> = {};
+    const count = (k: string) => { n[k] = (n[k] ?? 0) + 1; };
+    const oldDb = join(dir, 'leads.db');
+    const has = (db: DatabaseSync, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    if (existsSync(oldDb)) {
+      const old = new DatabaseSync(oldDb);
+      try {
+        if (pg && has(old, 'leads')) { // en SQLite la tabla es la misma: no hay nada que copiar
+          const cols = (old.prepare('SELECT name FROM pragma_table_info(?)').all('leads') as any[]).map((c) => c.name);
+          for (const l of old.prepare('SELECT * FROM leads ORDER BY id').all() as any[]) {
+            await this.raw('INSERT INTO leads (id, created_at, name, contact, company, interest, detail, status, notes, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING',
+              [l.id, l.created_at, l.name, l.contact, l.company, l.interest, l.detail, l.status, l.notes, cols.includes('source') ? l.source : '']);
+            count('interesados');
+          }
+          await this.raw(`SELECT setval(pg_get_serial_sequence('leads', 'id'), GREATEST((SELECT COALESCE(MAX(id), 0) FROM leads), 1))`);
+        }
+        if (pg && has(old, 'visitors')) for (const v of old.prepare('SELECT * FROM visitors').all() as any[]) {
+          await this.raw('INSERT INTO visitors (id, name, summary, visits, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING', [v.id, v.name, v.summary, v.visits, v.updated_at]); count('visitantes');
+        }
+        if (has(old, 'calls')) for (const c of old.prepare('SELECT * FROM calls ORDER BY id').all() as any[]) {
+          await this.raw('INSERT INTO conversations (at, kind, who, seconds, turns, transcript) VALUES ($1, $2, $3, $4, $5, $6)', [c.at, 'llamada', c.who, c.seconds, c.turns, c.transcript]); count('llamadas');
+        }
+      } finally { old.close(); }
+    }
+    const usoDb = join(dir, 'uso.db');
+    if (existsSync(usoDb)) {
+      const old = new DatabaseSync(usoDb);
+      try {
+        if (has(old, 'uso')) for (const u of old.prepare('SELECT * FROM uso').all() as any[]) {
+          await this.raw('INSERT INTO uso (day, key, value) VALUES ($1, $2, $3) ON CONFLICT (day, key) DO NOTHING', [u.day, u.key, u.value]); count('medidas de consumo');
+        }
+      } finally { old.close(); }
+    }
+    const json = (file: string): any[] => { try { const d = JSON.parse(readFileSync(join(dir, file), 'utf8')); return Array.isArray(d) ? d : []; } catch { return []; } };
+    for (const d of json('devices.json')) if (d?.id) {
+      await this.raw('INSERT INTO devices (id, name, created_at, last_seen) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING', [String(d.id), String(d.name ?? 'Dispositivo'), d.createdAt, d.lastSeen ?? d.createdAt]); count('dispositivos');
+    }
+    for (const p of json('proyectos.json')) if (p?.slug) {
+      await this.raw('INSERT INTO projects (slug, name, status, updated_at, data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO NOTHING', [String(p.slug), String(p.name ?? p.slug), String(p.status ?? 'libre'), p.updatedAt ?? new Date().toISOString(), JSON.stringify(p)]); count('proyectos');
+    }
+    await this.raw('INSERT INTO meta (key, value) VALUES ($1, $2)', ['legacy_v1', new Date().toISOString()]);
+    const done = Object.entries(n).map(([k, v]) => `${v} ${k}`).join(', ');
+    this.log.log(done ? `datos anteriores copiados a la base: ${done}` : 'no habia datos anteriores que copiar');
+  }
+
+  async onModuleDestroy() { try { await this.pool?.end(); this.lite?.close(); } catch { /* ya cerrada */ } }
+}
