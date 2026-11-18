@@ -28,7 +28,7 @@ export class LeadsService {
   get dbKind() { return this.db.kind; }
 
   /** Guarda una conversacion terminada: llamada de WhatsApp ('llamada') o conversacion del sitio ('sitio'). */
-  async logConversation(kind: 'llamada' | 'sitio', who: string, seconds: number, lines: string[]) {
+  async logConversation(kind: 'llamada' | 'sitio' | 'whatsapp', who: string, seconds: number, lines: string[]) {
     try {
       await this.db.query('INSERT INTO conversations (at, kind, who, seconds, turns, transcript) VALUES ($1, $2, $3, $4, $5, $6)',
         [new Date().toISOString(), kind, clip(who, 120), Math.round(seconds), lines.filter((l) => l.startsWith('🧑')).length, lines.join('\n').slice(0, 12_000)]);
@@ -135,7 +135,8 @@ export class LeadsService {
    * Devuelve '' si la plantilla se envio, el motivo si no, o undefined si WhatsApp no esta configurado.
    */
   async announce(lead: Lead): Promise<string | undefined> {
-    const wa = this.whatsapp.enabled ? await this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest) : undefined;
+    // Quien deja sus datos escribiendo por WhatsApp ya esta en ese chat: no se le manda ademas la plantilla de bienvenida.
+    const wa = this.whatsapp.enabled && lead.source !== 'whatsapp' ? await this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest) : undefined;
     void this.notify(lead, wa);
     return wa;
   }

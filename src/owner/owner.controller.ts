@@ -182,6 +182,15 @@ export class OwnerController {
     return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects };
   }
 
+  /** Borra el proyecto con su codigo y su sitio publicado. No se puede deshacer. */
+  @Delete('projects/:slug')
+  async removeProject(@Req() req: Request, @Param('slug') slug: string) {
+    this.require(req);
+    const err = await this.workshop.remove(slug);
+    if (err) throw new HttpException({ error: err }, err === 'no_existe' ? 404 : err === 'ocupado' ? 409 : 500);
+    return { ok: true };
+  }
+
   /** Descarga el proyecto como .tar.gz (sin node_modules ni .git). tar no sigue enlaces simbolicos. */
   @Get('projects/:slug/descargar')
   download(@Req() req: Request, @Param('slug') slug: string, @Res() res: Response) {

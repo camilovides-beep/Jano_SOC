@@ -42,6 +42,12 @@ const SCHEMA = [
      demo_offered INTEGER NOT NULL DEFAULT 0, demo_done INTEGER NOT NULL DEFAULT 0, lead INTEGER NOT NULL DEFAULT 0, cases INTEGER NOT NULL DEFAULT 0,
      interest TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '', objections TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS visits_at ON visits (at)`,
+  // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.
+  // open_at y last_at son texto ISO ('' = sin conversacion abierta): se comparan como texto en las dos bases.
+  `CREATE TABLE IF NOT EXISTS wa_messages (id {{ID}}, phone TEXT NOT NULL, at {{TS}} NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS wa_messages_phone ON wa_messages (phone, id)`,
+  `CREATE TABLE IF NOT EXISTS wa_chats (phone TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', last_at TEXT NOT NULL DEFAULT '', open_at TEXT NOT NULL DEFAULT '',
+     turns INTEGER NOT NULL DEFAULT 0, leads TEXT NOT NULL DEFAULT '', cases INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
   `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
   `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,

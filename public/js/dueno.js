@@ -124,7 +124,7 @@ function drawFunnel(f, reports) {
   const t = f.conversations;
   $('funnel').replaceChildren(bar('Conversaciones', t, t, false, 'var(--s1)'), bar('Mostraron interés', f.interested, t, false, 'var(--s1)'), bar('Se les ofreció la demostración', f.demoOffered, t, false, 'var(--s1)'),
     bar('Hicieron la demostración', f.demoDone, t, false, 'var(--s1)'), bar('Dejaron sus datos', f.leads, t, false, 'var(--s1)'));
-  $('funnel-note').textContent = `Porcentajes sobre las ${n(t)} conversaciones${f.calls ? ` (${n(f.calls)} fueron llamadas de WhatsApp)` : ''}.` + (reports ? '' : ' El análisis está apagado (VISIT_REPORTS=0): "mostraron interés" solo cuenta a quienes hicieron la demostración o dejaron datos.');
+  $('funnel-note').textContent = `Porcentajes sobre las ${n(t)} conversaciones${f.calls || f.chats ? ` (${[f.calls ? `${n(f.calls)} llamadas de WhatsApp` : '', f.chats ? `${n(f.chats)} chats de WhatsApp` : ''].filter(Boolean).join(' y ')})` : ''}.` + (reports ? '' : ' El análisis está apagado (VISIT_REPORTS=0): "mostraron interés" solo cuenta a quienes hicieron la demostración o dejaron datos.');
   const pair = (title, s, withLabel, withoutLabel) => [el('small', { textContent: title }), bar(withLabel, s.withLeads, s.withN, true, 'var(--s3)'), bar(withoutLabel, s.withoutLeads, s.withoutN, true, 'var(--s4)')];
   $('funnel-split').replaceChildren(...pair('Demostración en vivo', f.demo, 'Con demostración', 'Sin demostración'), ...pair('Caso del portafolio', f.cases, 'Con un caso contado', 'Sin caso'),
     ...(f.interested < 20 ? [el('small', { textContent: `Con ${n(f.interested)} ${f.interested === 1 ? 'conversación' : 'conversaciones'} con interés todavía es pronto para sacar conclusiones.` })] : []));
@@ -142,7 +142,7 @@ function drawVisits() {
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`visits/${v.id}`, { method: 'DELETE' }); loadVisits(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: v.kind === 'llamada' ? 'Llamada de WhatsApp' : 'Conversación en el sitio' }), tag(pretty(v.interest), !!v.interest), tag('Dejó sus datos', !!Number(v.lead)),
+      el('div', { className: 'row' }, el('strong', { textContent: v.kind === 'llamada' ? 'Llamada de WhatsApp' : v.kind === 'whatsapp' ? 'Chat de WhatsApp' : 'Conversación en el sitio' }), tag(pretty(v.interest), !!v.interest), tag('Dejó sus datos', !!Number(v.lead)),
         tag(Number(v.demo_done) ? 'Hizo la demostración' : 'Demostración ofrecida', !!Number(v.demo_done) || !!Number(v.demo_offered)), tag('Caso del portafolio', !!Number(v.cases)), tag('Sin interés', !Number(v.interested))),
       el('small', { textContent: `${fecha(v.at)} · ${v.seconds < 90 ? `${v.seconds} s` : `${min(v.seconds)} min`} · ${v.turns} ${v.turns === 1 ? 'intervención' : 'intervenciones'} de la persona` }),
       v.summary ? el('div', { textContent: v.summary }) : el('div', { className: 'muted', textContent: 'Sin resumen.' }), lines('Preguntó', v.asked), lines('Dudas u objeciones', v.objections), el('div', { className: 'row' }, del));
@@ -250,7 +250,7 @@ async function loadConversations() {
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`conversations/${c.id}`, { method: 'DELETE' }); loadConversations(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: c.who || 'Sin nombre' }), el('span', { className: 'tag', textContent: c.kind === 'llamada' ? 'Llamada de WhatsApp' : 'Sitio' })),
+      el('div', { className: 'row' }, el('strong', { textContent: c.who || 'Sin nombre' }), el('span', { className: 'tag', textContent: c.kind === 'llamada' ? 'Llamada de WhatsApp' : c.kind === 'whatsapp' ? 'Chat de WhatsApp' : 'Sitio' })),
       el('small', { textContent: `${fecha(c.at)} · ${c.seconds < 90 ? `${c.seconds} s` : `${min(c.seconds)} min`} · ${c.turns} ${c.turns === 1 ? 'intervención' : 'intervenciones'} de la persona` }),
       el('div', { className: 'row' }, open, del), body);
   }) : [el('p', { className: 'muted', textContent: 'Todavía no hay conversaciones guardadas.' })]));
@@ -268,7 +268,7 @@ async function loadUsage() {
     ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)], ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
     ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
     ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
-    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['YouTube', (d) => n(d.youtube_searches)],
+    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
     ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
     ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
   ];
@@ -287,7 +287,15 @@ async function loadProjects() {
     const chk = !p.check ? null : el('div', { style: `color:${p.check.ok ? 'var(--ok)' : 'var(--warn)'};white-space:pre-wrap`, textContent: p.check.ok
       ? `✓ Sitio revisado: ${p.check.pages} páginas, ${p.check.files} archivos, sin enlaces rotos${p.repaired ? ' (tras una corrección automática)' : ''}`
       : `⚠ La revisión encontró ${p.check.issues.length} problemas:\n- ${p.check.issues.join('\n- ')}` });
-    const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }));
+    const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
+    del.addEventListener('click', async () => {
+      if (!del.dataset.sure) { del.dataset.sure = '1'; del.textContent = '¿Seguro? Se borran el código y el sitio. Toca otra vez'; return; }
+      del.disabled = true;
+      const r = await api(`projects/${p.slug}`, { method: 'DELETE' });
+      if (r && r.ok === false) { const e = (await r.json().catch(() => ({}))).error; del.textContent = e === 'ocupado' ? 'Tiene un encargo en curso' : 'No se pudo borrar'; return; }
+      loadProjects();
+    });
     const files = el('details', {}, el('summary', { textContent: `Archivos (${p.files.length})` }), el('pre', { textContent: p.files.join('\n') }));
     return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: p.name }), el('span', { className: 'tag', textContent: p.status })),
       el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, links,

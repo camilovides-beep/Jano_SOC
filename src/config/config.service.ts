@@ -54,6 +54,12 @@ export class ConfigService {
   /** n8n: webhook al que se reenvian los mensajes de WhatsApp y secreto compartido (cabecera X-Forward-Secret). */
   readonly n8nWebhookUrl: string;
   readonly n8nSecret: string;
+  /** Quien responde los mensajes de WhatsApp: 'avatar' (por defecto), 'n8n' (se reenvian a N8N_WEBHOOK_URL) u 'off'. */
+  readonly whatsappReplies: 'avatar' | 'n8n' | 'off';
+  /** Minutos sin mensajes para dar por cerrado un chat de WhatsApp (resumen, embudo e informe). */
+  readonly waIdleMinutes: number;
+  /** Tope de mensajes que se le responden a un mismo numero por hora. */
+  readonly waMaxPerHour: number;
   /** Taller de programacion (solo modo dueño): Claude Code con la suscripcion de Javier. Sin token = desactivado. */
   readonly claudeToken: string;
   readonly claudeBin: string;
@@ -190,6 +196,10 @@ export class ConfigService {
     this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
     this.n8nWebhookUrl = str('N8N_WEBHOOK_URL');
     this.n8nSecret = str('N8N_SECRET');
+    const replies = str('WHATSAPP_REPLIES', 'avatar').toLowerCase();
+    this.whatsappReplies = replies === 'n8n' || replies === 'off' ? replies : 'avatar';
+    this.waIdleMinutes = int('WHATSAPP_IDLE_MINUTES', 30, 2);
+    this.waMaxPerHour = int('WHATSAPP_MAX_PER_HOUR', 40, 1);
     this.claudeToken = str('CLAUDE_CODE_OAUTH_TOKEN');
     this.claudeBin = str('CLAUDE_BIN', 'claude');
     this.claudeModel = str('CLAUDE_MODEL', 'claude-opus-5-5');

@@ -7,6 +7,7 @@ import { LeadsService } from '../leads/leads.service';
 import { SessionGateway } from '../session/session.gateway';
 import { CallMedia } from './call-media';
 import { CallSocket } from './call-socket';
+import { WaChatService } from '../whatsapp/wa-chat.service';
 
 const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -27,7 +28,7 @@ export class CallsController {
   private readonly sockets = new Map<string, CallSocket>();
   /** Transcripcion de cada llamada en curso: quien llama, inicio y las frases de cada lado. */
   private readonly logs = new Map<string, { who: string; start: number; lines: string[]; avatar: string; speech: number }>();
-  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway) {}
+  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway, private readonly chat: WaChatService) {}
 
   @Get()
   verify(@Query('hub.mode') mode: string, @Query('hub.verify_token') token: string, @Query('hub.challenge') challenge: string) {
@@ -47,9 +48,13 @@ export class CallsController {
     if (!fromMeta && !fromForwarder) throw new HttpException('firma invalida', 401);
 
     let body: any; try { body = JSON.parse(raw.toString('utf8')); } catch { return { ok: true }; }
-    // Intermediario: lo que no son llamadas (mensajes, estados) se reenvia tal cual a n8n, que responde por texto.
-    const hasMessages = (body?.entry ?? []).some((e: any) => (e?.changes ?? []).some((c: any) => c?.field === 'messages'));
-    if (hasMessages && fromMeta && this.cfg.n8nWebhookUrl) void this.forwardToN8n(raw);
+    // Mensajes (texto, imagenes, notas de voz): los responde el avatar (WHATSAPP_REPLIES=avatar, por defecto) o se reenvian
+    // tal cual a n8n (WHATSAPP_REPLIES=n8n). Solo si la firma es de Meta: un reenvio de otro sistema no dispara respuestas.
+    const messages = (body?.entry ?? []).flatMap((e: any) => e?.changes ?? []).filter((c: any) => c?.field === 'messages');
+    if (messages.length && fromMeta) {
+      if (this.cfg.whatsappReplies === 'n8n' && this.cfg.n8nWebhookUrl) void this.forwardToN8n(raw);
+      else if (this.cfg.whatsappReplies === 'avatar') for (const c of messages) this.chat.onWebhook(c.value);
+    }
     for (const entry of body?.entry ?? []) {
       for (const change of entry?.changes ?? []) {
         if (change?.field !== 'calls') continue; // mensajes y demas eventos no se tocan aqui

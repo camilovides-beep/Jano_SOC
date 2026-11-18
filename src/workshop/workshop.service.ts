@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { ChildProcess, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import * as QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
@@ -169,6 +169,26 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     return `Trabajando en "${p?.name ?? this.job.slug}" con ${st.model} hace ${min} min (${this.job.steps} pasos${st.agentsTotal ? `, ${st.agentsTotal} subagentes lanzados` : ''}). Ahora: ${this.job.activity}. Encargo: ${p?.lastTask ?? ''}`;
   }
   busy() { return this.job?.slug; }
+
+  /**
+   * Borra un proyecto: su carpeta (codigo y sitio publicado) y su registro. El historial de encargos se conserva.
+   * En produccion los archivos son del usuario del taller, asi que primero los borra el (sudo solo permite `claude` y
+   * `rm` como ese usuario, ver Dockerfile) y despues el avatar quita la carpeta, que es suya. rm no sigue enlaces simbolicos.
+   */
+  async remove(slug: string): Promise<string | null> {
+    const i = this.projects.findIndex((p) => p.slug === slug);
+    if (i < 0) return 'no_existe';
+    if (this.job?.slug === slug) return 'ocupado';
+    const dir = this.dir(slug);
+    if (resolve(dir) !== join(this.root, slug) || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) return 'no_existe';
+    if (this.cfg.tallerUser && existsSync(dir)) spawnSync('sudo', ['-n', '-u', this.cfg.tallerUser, '/bin/rm', '-rf', '--', dir], { stdio: 'ignore', timeout: 60_000 });
+    try { rmSync(dir, { recursive: true, force: true }); } catch (e) { this.log.warn(`no se pudo borrar ${slug}: ${(e as Error).message}`); }
+    if (existsSync(dir)) return 'archivos';
+    await this.db.query('DELETE FROM projects WHERE slug = $1', [slug]);
+    this.projects.splice(i, 1);
+    this.log.log(`taller: proyecto "${slug}" borrado`);
+    return null;
+  }
 
   cancel(): string {
     if (!this.job) return 'No hay ningún encargo en curso.';
