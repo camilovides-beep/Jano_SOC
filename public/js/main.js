@@ -6,6 +6,7 @@ import { connect } from './socket.js';
 import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
 import { createMusic } from './music.js';
 import { BrowserVoice } from './browser-voice.js';
+import { createGate } from './mic-gate.js';
 
 const $ = (id) => document.getElementById(id);
 const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', away: 'Suspendido' };
@@ -99,6 +100,10 @@ let state = 'idle', live = false, connecting = false, speechId = -1, subChars = 
 // la conversacion arranca sola y lo que dijo mientras se conectaba se envia desde este pequeno buffer.
 let armed = false, loud = 0, retryAt = 0;
 const prebuffer = [];
+// Compuerta del microfono: suspendido, o con musica o un encargo en curso y 20 s sin que nadie hable, el audio solo se
+// envia cuando hay voz. El servidor decide si se usa y con que umbral (`ready.gate`).
+let gate = null, lastTalk = 0;
+const ecoMode = (now) => !!gate && (suspended || ((!!work || music.active) && state === 'listening' && now - lastTalk > 20000));
 
 // Identificador al azar de este navegador, para que el avatar reconozca a quien vuelve. En un kiosco compartido se
 // desactiva con ?kiosco=1 (todas las personas usarian el mismo navegador).
@@ -133,6 +138,7 @@ function onMessage(msg) {
   switch (msg.type) {
     case 'ready':
       live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
+      gate = msg.gate > 0 ? createGate({ rms: msg.gate }) : null; lastTalk = performance.now();
       if (msg.wake) wakeWord = msg.wake[0].toUpperCase() + msg.wake.slice(1);
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
       if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
@@ -146,6 +152,7 @@ function onMessage(msg) {
       break;
     case 'user_partial':
       if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
+      lastTalk = performance.now();
       duckUntil = performance.now() + 2500; // la persona esta hablando: la musica baja un momento
       break;
     case 'user_final':
@@ -205,7 +212,12 @@ function startSession() {
 }
 
 function onMicChunk(buffer) {
-  if (live) { socket.sendAudio(buffer); return; }
+  if (live) {
+    const now = performance.now();
+    if (state === 'speaking' || state === 'thinking') lastTalk = now;
+    if (!gate) socket.sendAudio(buffer); else for (const b of gate.push(buffer, ecoMode(now))) socket.sendAudio(b);
+    return;
+  }
   if (!armed || dormant) return; // suspendido sin sesion: no se oye nada; solo despierta con un toque
   prebuffer.push(buffer); if (prebuffer.length > 50) prebuffer.shift(); // ~2 s
   if (connecting || performance.now() < retryAt) { loud = 0; return; }
