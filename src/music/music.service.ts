@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface Track { id: string; title: string; channel: string; }
 /** Musica de una sesion: la cola la decide el servidor; el navegador la reproduce y avisa cuando cambia de cancion. */
@@ -20,7 +21,7 @@ export class MusicService {
   private readonly log = new Logger(MusicService.name);
   private readonly cache = new Map<string, { at: number; tracks: Track[] }>();
   private day = ''; private used = 0;
-  constructor(private readonly cfg: ConfigService) {}
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
   get enabled() { return !!this.cfg.youtubeApiKey; }
   newState(): MusicState { return { queue: [], index: 0, volume: this.cfg.musicVolume, playing: false, since: 0 }; }
@@ -33,7 +34,7 @@ export class MusicService {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== this.day) { this.day = today; this.used = 0; }
     if (this.used >= this.cfg.musicDailySearches) throw new Error('se alcanzó el tope de búsquedas de música de hoy');
-    this.used++;
+    this.used++; this.usage.add('youtube_searches');
     const url = new URL('https://www.googleapis.com/youtube/v3/search');
     url.search = new URLSearchParams({ part: 'snippet', q, type: 'video', videoEmbeddable: 'true', videoSyndicated: 'true', maxResults: '10', safeSearch: 'moderate', key: this.cfg.youtubeApiKey }).toString();
     let res: Response;

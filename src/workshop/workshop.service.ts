@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { join, resolve, sep } from 'node:path';
 import * as QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface Project {
   slug: string;
@@ -74,7 +75,7 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
   private lastEmit = 0; private emitTimer?: NodeJS.Timeout;
   private listeners: ((d: JobDone) => void)[] = [];
 
-  constructor(private readonly cfg: ConfigService) {
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {
     this.root = resolve(cfg.dataDir, 'proyectos');
     this.file = resolve(cfg.dataDir, 'proyectos.json');
     if (!this.enabled) return;
@@ -249,6 +250,8 @@ export class WorkshopService implements OnApplicationBootstrap, OnModuleDestroy 
       if (this.job !== job) return;
       clearTimeout(job.timer); this.job = undefined; this.emit(true);
       const seconds = Math.round((Date.now() - t0) / 1000);
+      // Consumo del encargo. total_cost_usd es el equivalente a precio de API que informa Claude Code; con la suscripcion no se cobra aparte.
+      this.usage.add('claude_jobs'); this.usage.add('claude_s', seconds); this.usage.add('claude_turns', Number(result?.num_turns) || 0); this.usage.add('claude_usd', Number(result?.total_cost_usd) || 0);
       if (result?.session_id) project.sessionId = result.session_id;
       let ok = !!result && !result.is_error && code === 0;
       let summary = String(result?.result ?? '').trim() || lastText;

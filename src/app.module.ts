@@ -22,6 +22,7 @@ import { SitesController } from './workshop/sites.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
+import { UsageService } from './usage/usage.service';
 
 @Module({
   imports: [
@@ -31,6 +32,6 @@ import { ElevenLabsService } from './tts/elevenlabs.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
+  providers: [ConfigService, UsageService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, CardsService, MemoryService, SessionGateway],
 })
 export class AppModule {}

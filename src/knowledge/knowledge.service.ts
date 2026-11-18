@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface Chunk { text: string; source: string; scope: 'publico' | 'privado'; }
 export interface Hit extends Chunk { score: number; }
@@ -16,7 +17,7 @@ export interface Hit extends Chunk { score: number; }
 export class KnowledgeService {
   private readonly log = new Logger(KnowledgeService.name);
   private ready: Promise<boolean> | null = null;
-  constructor(private readonly cfg: ConfigService) {}
+  constructor(private readonly cfg: ConfigService, @Optional() private readonly usage?: UsageService) {} // sin UsageService en el script de carga
 
   get enabled() { return !!(this.cfg.nvidiaApiKey && this.cfg.qdrantUrl); }
 
@@ -27,6 +28,7 @@ export class KnowledgeService {
       body: JSON.stringify({ model: this.cfg.embedModel, input: texts, input_type: type, encoding_format: 'float', truncate: 'END' }),
       signal: signal ?? AbortSignal.timeout(20_000),
     });
+    this.usage?.add('nvidia_calls');
     const d: any = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`embeddings: ${res.status} ${String(d.detail ?? d.title ?? '').slice(0, 120)}`);
     if (!Array.isArray(d.data)) throw new Error('embeddings: respuesta sin datos');

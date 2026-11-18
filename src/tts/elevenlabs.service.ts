@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface TtsChunk {
   /** Audio PCM 16 bits mono en base64, tal como lo entrega ElevenLabs. */
@@ -20,7 +21,7 @@ export const TTS_SAMPLE_RATE = 24000;
 @Injectable()
 export class ElevenLabsService {
   private readonly log = new Logger(ElevenLabsService.name);
-  constructor(private readonly cfg: ConfigService) {}
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
   async *stream(text: string, signal?: AbortSignal, lang = 'es'): AsyncGenerator<TtsChunk> {
     const url =
@@ -37,6 +38,7 @@ export class ElevenLabsService {
       this.log.error(`ElevenLabs respondio ${res.status}: ${detail}`);
       throw new Error(`ElevenLabs respondio ${res.status}`);
     }
+    this.usage.add('eleven_calls'); this.usage.add('eleven_chars', text.length);
     const decoder = new TextDecoder();
     let pending = '';
     for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {

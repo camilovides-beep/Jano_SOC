@@ -71,6 +71,8 @@ export class ConfigService {
   readonly musicDailySearches: number;
   readonly musicMaxMinutes: number;
   readonly suspendMaxMinutes: number;
+  /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
+  readonly usagePrices: Record<string, number>;
   readonly wakeWords: string[];
   /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
   readonly publicUrl: string;
@@ -175,6 +177,9 @@ export class ConfigService {
     this.musicDailySearches = int('MUSIC_DAILY_SEARCHES', 80, 1);
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.suspendMaxMinutes = int('SUSPEND_MAX_MINUTES', 120, 1);
+    this.usagePrices = {};
+    try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
+    catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }
     // Palabra para despertar y las formas en que el reconocedor suele escribirla. La primera es la que se muestra.
     this.wakeWords = (process.env.WAKE_WORDS || 'javi,javier,xavi,havi,habi,jabi,jabe,javy,jaby,yavi,yabi').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');

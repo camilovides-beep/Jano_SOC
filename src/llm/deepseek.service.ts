@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface ToolCall { id: string; name: string; arguments: string; }
 export type LlmEvent = { type: 'text'; delta: string } | { type: 'tool_calls'; calls: ToolCall[] };
@@ -9,11 +10,13 @@ export type LlmEvent = { type: 'text'; delta: string } | { type: 'tool_calls'; c
  *  POST https://api.deepseek.com/chat/completions, "Authorization: Bearer <clave>", stream: true (SSE, termina en [DONE]).
  *  El modo de razonamiento viene activado por defecto: se desactiva con thinking {type: "disabled"} para bajar la latencia.
  *  Las tool calls llegan por fragmentos: se unen por `index`.
+ *  Con stream_options {include_usage: true} el ultimo fragmento trae `usage` (prompt_tokens, completion_tokens y
+ *  prompt_cache_hit_tokens). Probado el 2026-11-18. Si la llamada se corta antes (interrupcion), ese dato no llega.
  */
 @Injectable()
 export class DeepSeekService {
   private readonly log = new Logger(DeepSeekService.name);
-  constructor(private readonly cfg: ConfigService) {}
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
   /** Respuesta completa en texto (sin herramientas). */
   async complete(messages: unknown[]): Promise<string> {
@@ -28,7 +31,7 @@ export class DeepSeekService {
       headers: { Authorization: `Bearer ${this.cfg.deepseekApiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: this.cfg.deepseekModel, messages, stream: true, thinking: { type: 'disabled' },
-        max_tokens: maxTokens, ...(tools.length ? { tools } : {}),
+        max_tokens: maxTokens, stream_options: { include_usage: true }, ...(tools.length ? { tools } : {}),
       }),
       signal,
     });
@@ -38,6 +41,8 @@ export class DeepSeekService {
       throw new Error(`DeepSeek respondio ${res.status}`);
     }
     const calls: ToolCall[] = [];
+    let counted = false;
+    try {
     const decoder = new TextDecoder();
     let pending = '';
     for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {
@@ -50,6 +55,10 @@ export class DeepSeekService {
         const data = line.slice(5).trim();
         if (data === '[DONE]') continue;
         let d: any; try { d = JSON.parse(data); } catch { continue; }
+        if (d.usage && !counted) {
+          counted = true; this.usage.add('deepseek_calls');
+          this.usage.add('deepseek_in', d.usage.prompt_tokens); this.usage.add('deepseek_cache', d.usage.prompt_cache_hit_tokens); this.usage.add('deepseek_out', d.usage.completion_tokens);
+        }
         const delta = d.choices?.[0]?.delta;
         if (!delta) continue;
         if (delta.content) yield { type: 'text', delta: delta.content };
@@ -61,6 +70,7 @@ export class DeepSeekService {
         }
       }
     }
+    } finally { if (!counted) this.usage.add('deepseek_sin_dato'); }
     const ready = calls.filter((c) => c && c.name);
     if (ready.length) yield { type: 'tool_calls', calls: ready };
   }

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import WebSocket from 'ws';
 import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
 
 export interface SttHandlers {
   /** Texto reconocido. isFinal: el tramo ya no cambia. speechFinal: Deepgram detecto fin de frase. */
@@ -20,7 +21,7 @@ export interface SttStream { send(audio: Buffer): void; close(): void; }
 @Injectable()
 export class DeepgramService {
   private readonly log = new Logger(DeepgramService.name);
-  constructor(private readonly cfg: ConfigService) {}
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
   open(h: SttHandlers): SttStream {
     const q = new URLSearchParams({
@@ -44,7 +45,7 @@ export class DeepgramService {
     ws.on('close', (code) => { clearInterval(keep); if (!closed) { closed = true; h.onClose(`codigo ${code}`); } });
     return {
       send: (audio) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(audio);
+        if (ws.readyState === WebSocket.OPEN) { ws.send(audio); this.usage.add('deepgram_s', audio.length / 32000); } // PCM 16 bits a 16 kHz
         else if (ws.readyState === WebSocket.CONNECTING && pending.length < 100) pending.push(audio);
       },
       close: () => {

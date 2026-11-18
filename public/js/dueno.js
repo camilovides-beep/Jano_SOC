@@ -21,6 +21,26 @@ async function refresh() {
   }));
   loadLeads();
   loadProjects();
+  loadUsage();
+}
+
+// Consumo por dia: una fila por dia con lo que midio el servidor.
+async function loadUsage() {
+  const res = await api('usage'); if (!res.ok) return;
+  const { days } = await res.json();
+  $('usage').hidden = false;
+  const n = (v) => Math.round(v || 0).toLocaleString('es-CO'), min = (v) => Math.round((v || 0) / 60);
+  const cols = [
+    ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)],
+    ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
+    ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
+    ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
+    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['YouTube', (d) => n(d.youtube_searches)],
+    ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
+    ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
+  ];
+  const row = (cells, tag) => { const tr = document.createElement('tr'); for (const c of cells) { const el = document.createElement(tag); el.textContent = c; el.style.cssText = 'padding:6px 10px;text-align:right;border-bottom:1px solid rgba(128,128,128,.25)'; tr.append(el); } return tr; };
+  $('usage-table').replaceChildren(row(cols.map((c) => c[0]), 'th'), ...(days.length ? days.map((d) => row(cols.map((c) => c[1](d)), 'td')) : [row(['Sin datos todavía'], 'td')]));
 }
 
 async function loadLeads() {
