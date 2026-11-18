@@ -7,6 +7,8 @@ import { dirname } from 'node:path';
 import * as QRCode from 'qrcode';
 import { WorkshopService } from '../workshop/workshop.service';
 import { UsageService } from '../usage/usage.service';
+import { ImagesService } from '../images/images.service';
+import { MusicService } from '../music/music.service';
 
 // Detras del proxy, la ultima direccion de X-Forwarded-For la puso el proxy (las anteriores las puede inventar el cliente).
 const ipOf = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',').pop()!.trim();
@@ -15,7 +17,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService) {}
 
   private cookie(req: Request, value: string, maxAge: number) {
     return `${OWNER_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
@@ -68,7 +70,9 @@ export class OwnerController {
     this.require(req);
     const [stats, usage] = await Promise.all([this.leads.stats(30), this.usage.days(30)]);
     const projects = this.workshop.list();
-    return { db: this.leads.dbKind, stats, usage, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
+    // Que funciones tienen su clave puesta: sirve para ver de un vistazo por que el avatar dice que no puede hacer algo.
+    const features = { 'Taller de programación': this.workshop.enabled, 'Música': this.music.enabled, 'Búsqueda de fotos': this.images.enabled, 'Generación de imágenes': this.images.canGenerate };
+    return { db: this.leads.dbKind, features, stats, usage, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
   }
 
   @Get('conversations')

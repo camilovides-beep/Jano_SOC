@@ -98,6 +98,7 @@ async function loadSummary() {
     tile(n(s.total), 'Interesados en total'), tile(n(nuevo), 'Sin contactar'), tile(n(last7), 'Interesados en 7 días'),
     tile(n(s.conversations), 'Conversaciones guardadas, 30 días'), tile(`${n(s.talkSeconds / 60)} min`, 'Tiempo conversado, 30 días'),
     ...(summary.workshop.enabled ? [tile(n(summary.workshop.projects), 'Proyectos del taller')] : []));
+  $('features').replaceChildren('Funciones: ', ...Object.entries(summary.features || {}).flatMap(([name, on], i) => [i ? ' · ' : '', el('span', { style: `color:${on ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${on ? '✓' : '✗'} ${name}${on ? '' : ' (falta su clave)'}` })]));
   barChart($('ch-leads'), s.days.map((d) => d.day), [{ name: 'Interesados', values: s.days.map((d) => d.leads) }], 'interesados');
   hbars($('by-status'), s.byStatus, pretty); hbars($('by-source'), s.bySource, SOURCE); hbars($('by-interest'), s.byInterest, pretty);
 }
