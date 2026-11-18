@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -76,6 +76,7 @@ function show(tab) {
   try { history.replaceState(null, '', `#${tab}`); } catch { /* sin historial */ }
   loaders[tab]().catch((e) => console.warn('panel:', e.message));
 }
+window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (loaders[t] && document.querySelector(`[data-view="${t}"]`).hidden) show(t); });
 $('tabs').addEventListener('click', (ev) => { const t = ev.target.closest('button[data-tab]'); if (t) show(t.dataset.tab); });
 
 async function refresh() {
@@ -102,9 +103,109 @@ async function loadSummary() {
   const sv = Object.entries(summary.services || {});
   $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : '#ff8a8a'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
     summary.alerts ? '' : ' · Los avisos por Telegram están apagados (falta configurarlo).');
+  drawFunnel(summary.funnel, summary.reports);
   barChart($('ch-leads'), s.days.map((d) => d.day), [{ name: 'Interesados', values: s.days.map((d) => d.leads) }], 'interesados');
   hbars($('by-status'), s.byStatus, pretty); hbars($('by-source'), s.bySource, SOURCE); hbars($('by-interest'), s.byInterest, pretty);
 }
+
+/**
+ * Embudo: una barra por paso, todas medidas contra el total de conversaciones (el porcentaje va escrito al lado).
+ * Los pasos no son uno dentro de otro (se puede dejar datos sin hacer la demostracion); por eso la segunda tarjeta
+ * compara, entre quienes mostraron interes, cuantos dejaron datos con y sin demostracion, y con y sin caso contado.
+ */
+function drawFunnel(f, reports) {
+  const pc = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const bar = (label, value, total, of, color) => el('div', { className: 'hbar', title: `${n(value)} de ${n(total)}` }, el('span', { textContent: label }),
+    el('div', { style: `width:${total ? Math.max(1, (value / total) * 100) : 1}%;background:${color}` }), el('b', {}, of ? (total ? `${n(value)} de ${n(total)}` : 'ninguna aún') : n(value), el('small', { className: 'muted', textContent: total ? `${pc(value, total)} %` : '' })));
+  if (!f || !f.conversations) {
+    $('funnel').replaceChildren(el('p', { className: 'muted', textContent: 'Todavía no hay conversaciones con visitantes registradas (se cuentan desde esta versión).' }));
+    $('funnel-note').textContent = ''; $('funnel-split').replaceChildren(el('p', { className: 'muted', textContent: 'Sin datos todavía.' })); return;
+  }
+  const t = f.conversations;
+  $('funnel').replaceChildren(bar('Conversaciones', t, t, false, 'var(--s1)'), bar('Mostraron interés', f.interested, t, false, 'var(--s1)'), bar('Se les ofreció la demostración', f.demoOffered, t, false, 'var(--s1)'),
+    bar('Hicieron la demostración', f.demoDone, t, false, 'var(--s1)'), bar('Dejaron sus datos', f.leads, t, false, 'var(--s1)'));
+  $('funnel-note').textContent = `Porcentajes sobre las ${n(t)} conversaciones${f.calls ? ` (${n(f.calls)} fueron llamadas de WhatsApp)` : ''}.` + (reports ? '' : ' El análisis está apagado (VISIT_REPORTS=0): "mostraron interés" solo cuenta a quienes hicieron la demostración o dejaron datos.');
+  const pair = (title, s, withLabel, withoutLabel) => [el('small', { textContent: title }), bar(withLabel, s.withLeads, s.withN, true, 'var(--s3)'), bar(withoutLabel, s.withoutLeads, s.withoutN, true, 'var(--s4)')];
+  $('funnel-split').replaceChildren(...pair('Demostración en vivo', f.demo, 'Con demostración', 'Sin demostración'), ...pair('Caso del portafolio', f.cases, 'Con un caso contado', 'Sin caso'),
+    ...(f.interested < 20 ? [el('small', { textContent: `Con ${n(f.interested)} ${f.interested === 1 ? 'conversación' : 'conversaciones'} con interés todavía es pronto para sacar conclusiones.` })] : []));
+}
+
+// ---------- visitas ----------
+let visits = [];
+async function loadVisits() { ({ visits } = await json('visits')); drawVisits(); }
+function drawVisits() {
+  const all = $('visit-all').checked, rows = visits.filter((v) => all || Number(v.interested));
+  $('visit-count').textContent = `(${rows.length}${rows.length !== visits.length ? ` de ${visits.length}` : ''})`;
+  const tag = (text, on = true) => (on ? el('span', { className: 'tag', textContent: text }) : null);
+  const lines = (label, text) => (text ? el('div', {}, el('small', { textContent: `${label}: ` }), text.split(' | ').join(' · ')) : null);
+  $('visit-list').replaceChildren(...(rows.length ? rows.map((v) => {
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
+    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`visits/${v.id}`, { method: 'DELETE' }); loadVisits(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
+    return el('li', {},
+      el('div', { className: 'row' }, el('strong', { textContent: v.kind === 'llamada' ? 'Llamada de WhatsApp' : 'Conversación en el sitio' }), tag(pretty(v.interest), !!v.interest), tag('Dejó sus datos', !!Number(v.lead)),
+        tag(Number(v.demo_done) ? 'Hizo la demostración' : 'Demostración ofrecida', !!Number(v.demo_done) || !!Number(v.demo_offered)), tag('Caso del portafolio', !!Number(v.cases)), tag('Sin interés', !Number(v.interested))),
+      el('small', { textContent: `${fecha(v.at)} · ${v.seconds < 90 ? `${v.seconds} s` : `${min(v.seconds)} min`} · ${v.turns} ${v.turns === 1 ? 'intervención' : 'intervenciones'} de la persona` }),
+      v.summary ? el('div', { textContent: v.summary }) : el('div', { className: 'muted', textContent: 'Sin resumen.' }), lines('Preguntó', v.asked), lines('Dudas u objeciones', v.objections), el('div', { className: 'row' }, del));
+  }) : [el('p', { className: 'muted', textContent: visits.length ? 'Ninguna mostró interés todavía. Marca la casilla para verlas todas.' : 'Todavía no hay visitas registradas.' })]));
+}
+$('visit-all').addEventListener('change', drawVisits);
+
+// ---------- portafolio ----------
+let cases = [], editing = null;
+const CASE_FIELDS = { title: 'case-title', sector: 'case-sector', client: 'case-client', problem: 'case-problem', solution: 'case-solution', result: 'case-result', tech: 'case-tech', link: 'case-link' };
+/** Reduce la foto a 1600 px de lado mayor y la pasa a JPEG, para que suba rapido y no pese en la pantalla del avatar. */
+async function shrink(file) {
+  const img = await createImageBitmap(file), k = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * k), height: Math.round(img.height * k) });
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return new Promise((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('no se pudo preparar la foto'))), 'image/jpeg', 0.86));
+}
+async function sendOk(res) { if (res.ok) return res.json(); const e = await res.json().catch(() => ({})); throw new Error(e.message || `el servidor respondió ${res.status}`); }
+function editCase(c) {
+  editing = c;
+  for (const [k, id] of Object.entries(CASE_FIELDS)) $(id).value = c ? c[k] || '' : '';
+  $('case-visible').checked = c ? c.visible : true; $('case-photo').value = ''; $('case-msg').textContent = '';
+  $('case-form-title').textContent = c ? `Editar: ${c.title}` : 'Agregar un caso'; $('case-save').textContent = c ? 'Guardar cambios' : 'Guardar caso'; $('case-cancel').hidden = !c;
+  if (c) $('case-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function loadCases() {
+  ({ cases } = await json('portfolio'));
+  $('case-count').textContent = `(${cases.length}${cases.some((c) => !c.visible) ? `, ${cases.filter((c) => !c.visible).length} ocultos` : ''})`;
+  const part = (label, text) => (text ? el('div', {}, el('small', { textContent: `${label}: ` }), text) : null);
+  $('case-list').replaceChildren(...(cases.length ? cases.map((c) => {
+    const edit = el('button', { type: 'button', className: 'small', textContent: 'Editar' }); edit.addEventListener('click', () => editCase(c));
+    const hide = el('button', { type: 'button', className: 'small', textContent: c.visible ? 'Ocultar' : 'Mostrar' });
+    hide.addEventListener('click', async () => { await api(`portfolio/${c.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: !c.visible }) }); loadCases(); });
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
+    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`portfolio/${c.id}`, { method: 'DELETE' }); if (editing?.id === c.id) editCase(null); loadCases(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
+    const noPhoto = !c.image ? null : el('button', { type: 'button', className: 'small', textContent: 'Quitar foto' });
+    noPhoto?.addEventListener('click', async () => { await api(`portfolio/${c.id}/image`, { method: 'DELETE' }); loadCases(); });
+    const missing = [!c.problem && 'el problema', !c.solution && 'lo que hiciste', !c.result && 'el resultado'].filter(Boolean);
+    return el('li', {},
+      el('div', { className: 'row' }, el('strong', { textContent: c.title }), c.sector ? el('span', { className: 'tag', textContent: c.sector }) : null, el('span', { className: 'tag', textContent: c.visible ? 'El avatar lo cuenta' : 'Oculto' })),
+      el('small', { textContent: `${c.client ? `Cliente: ${c.client}` : 'Cliente sin nombrar'} · actualizado ${fecha(c.updated_at)}` }),
+      part('Problema', c.problem), part('Lo que hiciste', c.solution), part('Resultado', c.result), part('Tecnologías', c.tech),
+      c.link ? el('a', { href: c.link, target: '_blank', rel: 'noopener', textContent: c.link }) : null,
+      missing.length ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Le falta ${missing.join(' y ')}: el avatar lo contará incompleto.` }) : null,
+      c.image ? el('img', { className: 'case-photo', src: c.image, alt: `Foto de ${c.title}`, loading: 'lazy' }) : null,
+      el('div', { className: 'row' }, edit, hide, noPhoto, del));
+  }) : [el('p', { className: 'muted', textContent: 'Todavía no hay casos. Con tres o cuatro el avatar ya puede mostrar lo que haces en vez de solo describirlo.' })]));
+}
+$('case-cancel').addEventListener('click', () => editCase(null));
+$('case-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault(); const msg = $('case-msg'); msg.textContent = ''; $('case-save').disabled = true;
+  try {
+    const body = { visible: $('case-visible').checked }; for (const [k, id] of Object.entries(CASE_FIELDS)) body[k] = $(id).value;
+    const saved = await sendOk(await api(editing ? `portfolio/${editing.id}` : 'portfolio', { method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+    const file = $('case-photo').files[0];
+    let photo = '';
+    if (file) try { await sendOk(await api(`portfolio/${saved.id}/image`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await shrink(file) })); }
+      catch (e) { photo = /decod/i.test(e.message) ? 'el archivo no es una imagen que el navegador pueda abrir' : e.message; }
+    editCase(null); await loadCases();
+    if (photo) msg.textContent = `El caso se guardó, pero la foto no: ${photo}. Puedes subirla de nuevo con Editar.`;
+  } catch (e) { msg.textContent = `No se guardó: ${e.message}`; }
+  $('case-save').disabled = false;
+});
 
 // ---------- interesados ----------
 let leads = [], statuses = [];

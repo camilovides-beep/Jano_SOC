@@ -85,6 +85,8 @@ export class ConfigService {
   readonly backupTelegram: boolean;
   readonly followupHour: number;
   readonly followupDays: number;
+  /** Al cerrar una conversacion publica: analizarla con el modelo y avisar por Telegram si mostro interes. */
+  readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
   readonly saveConversations: boolean;
   /** Si la revision del sitio encuentra fallos, devolverselos una vez a Claude Code antes de avisar. */
@@ -222,6 +224,7 @@ export class ConfigService {
     this.backupTelegram = process.env.BACKUP_TELEGRAM !== '0';
     this.followupHour = hour('FOLLOWUP_HOUR', 8);
     this.followupDays = int('FOLLOWUP_DAYS', 2, 1);
+    this.visitReports = process.env.VISIT_REPORTS !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
     catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }

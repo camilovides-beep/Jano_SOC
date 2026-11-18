@@ -20,6 +20,7 @@ async function main() {
   const existing = Number((await db.query('SELECT COUNT(*) AS n FROM leads'))[0]?.n ?? 0);
   if (existing && !force) throw new Error(`La base ya tiene ${existing} interesados. Para reemplazar todo su contenido, repite con --forzar.`);
   for (const t of BACKUP_TABLES) {
+    if (!(t in data.tables)) continue; // respaldo anterior a esa tabla: no se toca lo que haya
     const rows: Record<string, unknown>[] = Array.isArray(data.tables[t]) ? data.tables[t] : [];
     await db.query(`DELETE FROM ${t}`);
     for (const r of rows) {

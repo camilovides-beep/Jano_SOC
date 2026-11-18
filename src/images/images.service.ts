@@ -8,7 +8,7 @@ import { UsageService } from '../usage/usage.service';
 /** Un elemento de la galeria en pantalla: una foto (thumb/full) o un boceto en vivo (frame = direccion de la pagina). */
 export interface GalleryItem { thumb?: string; full?: string; frame?: string; label: string; credit?: string; link?: string; }
 /** Galeria de la sesion: lo que se esta mostrando al lado del avatar y cual esta seleccionada (va de fondo). */
-export interface GalleryState { title: string; kind: 'fotos' | 'bocetos' | 'generadas' | ''; items: GalleryItem[]; index: number; }
+export interface GalleryState { title: string; kind: 'fotos' | 'bocetos' | 'generadas' | 'portafolio' | ''; items: GalleryItem[]; index: number; }
 
 const FORMATS: Record<string, string> = { horizontal: 'widescreen_16_9', cuadrada: 'square_1_1', vertical: 'social_story_9_16' };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));

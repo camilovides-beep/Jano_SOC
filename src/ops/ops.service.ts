@@ -8,7 +8,7 @@ import { LeadsService } from '../leads/leads.service';
 import { AlertsService } from './alerts.service';
 
 /** Tablas que entran en el respaldo, en orden de restauracion. */
-export const BACKUP_TABLES = ['leads', 'conversations', 'visitors', 'uso', 'devices', 'projects', 'jobs'] as const;
+export const BACKUP_TABLES = ['leads', 'conversations', 'visitors', 'uso', 'devices', 'projects', 'jobs', 'portfolio', 'visits'] as const;
 
 /**
  * Tareas de fondo (pedido por Javier el 2026-11-18):

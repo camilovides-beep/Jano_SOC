@@ -58,6 +58,8 @@
     .hbar { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: 14px; }
     .hbar div { height: 12px; border-radius: 0 4px 4px 0; background: var(--s1); min-width: 2px; }
     .hbar b { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .hbar b small { font-weight: 400; margin-left: 6px; }
+    .case-photo { max-width: 260px; width: 100%; border-radius: 10px; display: block; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -83,7 +85,9 @@
         <nav class="tabs" role="tablist" id="tabs">
           <button role="tab" data-tab="resumen">Resumen</button>
           <button role="tab" data-tab="interesados">Interesados</button>
+          <button role="tab" data-tab="visitas">Visitas</button>
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
+          <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="consumo">Consumo</button>
           <button role="tab" data-tab="taller">Taller</button>
           <button role="tab" data-tab="dispositivos">Dispositivos</button>
@@ -93,6 +97,10 @@
           <div class="tiles" id="tiles"></div>
           <p id="features" class="muted" style="margin:0"></p>
           <p id="services" class="muted" style="margin:0"></p>
+          <div class="grid">
+            <div class="card"><h2>Embudo de las conversaciones, últimos 30 días</h2><div id="funnel" style="display:grid;gap:8px"></div><p id="funnel-note" style="font-size:14px"></p></div>
+            <div class="card"><h2>¿Qué ayuda a que dejen sus datos?</h2><p style="font-size:14px">Entre quienes mostraron interés, cuántos dejaron sus datos.</p><div id="funnel-split" style="display:grid;gap:8px"></div></div>
+          </div>
           <div class="card"><h2>Interesados por día, últimos 30 días</h2><div class="chart" id="ch-leads"></div></div>
           <div class="grid">
             <div class="card"><h2>Por estado</h2><div id="by-status" style="display:grid;gap:8px"></div></div>
@@ -109,6 +117,39 @@
             <select id="lead-source"><option value="">Todos los orígenes</option></select>
           </div>
           <ul class="list" id="lead-list"></ul>
+        </section>
+
+        <section data-view="visitas" class="card" hidden>
+          <div class="row between"><h2>Visitas <small id="visit-count"></small></h2><label class="row" style="font-size:14px"><input type="checkbox" id="visit-all"> Ver también las que no mostraron interés</label></div>
+          <p>Resumen de cada conversación con un visitante, hecho por el modelo al cerrarla. No guarda la transcripción ni datos de contacto.</p>
+          <ul class="list" id="visit-list"></ul>
+        </section>
+
+        <section data-view="portafolio" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2 id="case-form-title">Agregar un caso</h2>
+            <p>Trabajos reales que el avatar puede contar a los visitantes. Escribe como se lo contarías a un cliente; el avatar no agrega nada que no esté aquí. También se lo puedes dictar al avatar en tu modo ("agrega al portafolio…").</p>
+            <form id="case-form" style="display:grid;gap:10px">
+              <div class="grid" style="gap:10px">
+                <input id="case-title" placeholder="Título (ej. Bot de pedidos para una panadería)" maxlength="100" required>
+                <input id="case-sector" placeholder="Sector o tipo de negocio" maxlength="80">
+                <input id="case-client" placeholder="Cliente (déjalo vacío si no se puede nombrar)" maxlength="100">
+              </div>
+              <textarea id="case-problem" placeholder="Problema: qué le pasaba al cliente" maxlength="500"></textarea>
+              <textarea id="case-solution" placeholder="Lo que hiciste" maxlength="700"></textarea>
+              <textarea id="case-result" placeholder="Resultado: qué cambió, con cifras si las tienes" maxlength="500"></textarea>
+              <div class="grid" style="gap:10px">
+                <input id="case-tech" placeholder="Tecnologías (opcional)" maxlength="200">
+                <input id="case-link" type="url" placeholder="Enlace (opcional, https://…)" maxlength="300">
+              </div>
+              <div class="row">
+                <label class="row" style="font-size:14px">Foto o captura: <input id="case-photo" type="file" accept="image/jpeg,image/png,image/webp"></label>
+                <label class="row" style="font-size:14px"><input type="checkbox" id="case-visible" checked> El avatar puede contarlo</label>
+              </div>
+              <div class="row"><button type="submit" id="case-save">Guardar caso</button><button type="button" id="case-cancel" class="small" hidden>Cancelar</button><span class="msg" id="case-msg" role="alert"></span></div>
+            </form>
+          </div>
+          <div class="card"><h2>Casos <small id="case-count"></small></h2><ul class="list" id="case-list"></ul></div>
         </section>
 
         <section data-view="conversaciones" class="card" hidden>

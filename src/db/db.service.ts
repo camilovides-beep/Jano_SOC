@@ -30,6 +30,18 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS jobs (
      id {{ID}}, slug TEXT NOT NULL, at {{TS}} NOT NULL, seconds INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', ok INTEGER NOT NULL DEFAULT 0, repair INTEGER NOT NULL DEFAULT 0,
      turns INTEGER NOT NULL DEFAULT 0, usd {{REAL}} NOT NULL DEFAULT 0, issues INTEGER, task TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '')`,
+  // Portafolio: casos reales de Javier que el avatar puede contar (los carga el en el panel o por voz).
+  `CREATE TABLE IF NOT EXISTS portfolio (
+     id {{ID}}, created_at {{TS}} NOT NULL, updated_at {{TS}} NOT NULL, title TEXT NOT NULL, sector TEXT NOT NULL DEFAULT '', client TEXT NOT NULL DEFAULT '',
+     problem TEXT NOT NULL DEFAULT '', solution TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', tech TEXT NOT NULL DEFAULT '', link TEXT NOT NULL DEFAULT '',
+     image TEXT NOT NULL DEFAULT '', visible INTEGER NOT NULL DEFAULT 1)`,
+  // Visitas: una fila por conversacion publica terminada (sitio o llamada), con un resumen SIN transcripcion ni contacto.
+  // Alimenta el informe por Telegram y el embudo del panel.
+  `CREATE TABLE IF NOT EXISTS visits (
+     id {{ID}}, at {{TS}} NOT NULL, kind TEXT NOT NULL, seconds INTEGER NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0, interested INTEGER NOT NULL DEFAULT 0,
+     demo_offered INTEGER NOT NULL DEFAULT 0, demo_done INTEGER NOT NULL DEFAULT 0, lead INTEGER NOT NULL DEFAULT 0, cases INTEGER NOT NULL DEFAULT 0,
+     interest TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '', objections TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS visits_at ON visits (at)`,
   `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
   `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
   `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,

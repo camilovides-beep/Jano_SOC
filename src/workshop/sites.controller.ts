@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { ImagesService } from '../images/images.service';
 import { LeadsService } from '../leads/leads.service';
 import { WorkshopService } from './workshop.service';
+import { PortfolioService } from '../portfolio/portfolio.service';
 
 const ipOf = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',').pop()!.trim();
 const HOUR = 3600_000;
@@ -15,7 +16,7 @@ const HOUR = 3600_000;
 @Controller()
 export class SitesController {
   private readonly hits = new Map<string, number[]>();
-  constructor(private readonly workshop: WorkshopService, private readonly leads: LeadsService, private readonly images: ImagesService) {}
+  constructor(private readonly workshop: WorkshopService, private readonly leads: LeadsService, private readonly images: ImagesService, private readonly portfolio: PortfolioService) {}
 
   @Get('p/:slug')
   root(@Req() req: Request, @Param('slug') slug: string, @Res() res: Response) {
@@ -23,10 +24,10 @@ export class SitesController {
     return this.serve(slug, '', res);
   }
 
-  /** Imagenes generadas con IA (nombre al azar, imposible de adivinar). */
+  /** Imagenes generadas con IA y fotos del portafolio (nombre al azar, imposible de adivinar). */
   @Get('imagenes/:name')
   generated(@Param('name') name: string, @Res() res: Response) {
-    const file = this.images.file(name);
+    const file = this.images.file(name) ?? this.portfolio.file(name);
     if (!file) throw new HttpException('no encontrado', 404);
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Cache-Control', 'private, max-age=86400');
     return res.sendFile(file);

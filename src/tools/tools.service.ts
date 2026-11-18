@@ -6,6 +6,8 @@ import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
+import { PortfolioService } from '../portfolio/portfolio.service';
+import { VisitsService } from '../visits/visits.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
@@ -40,7 +42,9 @@ export interface ToolContext { origin: string; music?: MusicState; gallery?: Gal
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
-  notify?: (note: { text: string; image?: GalleryItem }) => void; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
+  notify?: (note: { text: string; image?: GalleryItem }) => void;
+  /** La sesion es del dueño (para herramientas publicas que le muestran mas a Javier, como los casos ocultos). */
+  owner?: boolean; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
@@ -79,7 +83,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -211,6 +215,24 @@ export class ToolsService {
           `La demostración dura ${DEMO_TURNS} intervenciones del cliente; el sistema te avisará cuándo cerrarla.`, demo: true };
       },
     };
+    // Portafolio (pedido por Javier el 2026-11-18): casos reales. El detalle completo y la foto salen de aqui; el prompt trae un resumen.
+    this.tools.portafolio = {
+      description: 'Trae un caso real del portafolio de Javier con todo su detalle y, si tiene foto, la muestra en pantalla. Úsala al contar un caso o cuando pidan ver trabajos, ejemplos o proyectos que Javier ha hecho. Sin "caso" muestra todos.',
+      parameters: { type: 'object', properties: { caso: { type: 'string', description: 'Título del caso, o el sector o tipo de negocio que se busca (por ejemplo "ferretería"). Omítelo para ver todos.' } }, required: [] },
+      run: (args, ctx) => {
+        const owner = ctx.owner === true, q = String(args.caso ?? '').trim();
+        const pool = owner ? portfolio.list() : portfolio.visible();
+        if (!pool.length) return 'El portafolio todavía no tiene casos cargados. No inventes ninguno: di que Javier puede contarle ejemplos cuando hablen.';
+        const found = q ? portfolio.find(q, owner) : pool;
+        if (!found.length) return `Ningún caso coincide con "${q}". Casos que sí hay: ${pool.slice(0, 12).map((c) => `"${c.title}"`).join(', ')}. No inventes uno; cuenta el más cercano o di que no hay uno parecido.`;
+        const shown = found.slice(0, 6), items = ctx.gallery ? portfolio.gallery(shown) : [];
+        if (items.length && ctx.gallery) Object.assign(ctx.gallery, { title: shown.length === 1 ? shown[0].title.slice(0, 60) : 'Trabajos de Javier', kind: 'portafolio', items, index: 0 });
+        const text = shown.map((c) => `- ${portfolio.describe(c)}${owner && !Number(c.visible) ? ' (OCULTO: los visitantes no lo ven)' : ''}${c.link ? ' Tiene enlace público.' : ''}`).join('\n');
+        return { text: `${shown.length === 1 ? 'Caso' : `${shown.length} casos`} del portafolio (datos reales, no agregues nada que no esté aquí):\n${text}\n` +
+          (items.length ? `En pantalla ${items.length === 1 ? 'está la foto del caso' : `están las fotos de ${items.length} casos, numeradas`}. ` : '') +
+          (shown.length === 1 ? 'Cuéntalo en dos o tres frases y relaciónalo con lo que la persona necesita.' : 'No los leas todos: nombra dos o tres en una frase y pregunta cuál le interesa.'), gallery: items.length ? 'show' : undefined };
+      },
+    };
     this.tools.galeria = {
       description: 'Cambia lo que se ve en la galería de la pantalla (fotos o bocetos): selecciona una por su número, pasa a la siguiente o a la anterior, o la quita. Úsala cuando digan "muéstrame la dos", "la siguiente", "la anterior", "quita las imágenes".',
       parameters: { type: 'object', properties: { accion: { type: 'string', enum: ['ver', 'siguiente', 'anterior', 'quitar'] }, numero: { type: 'number', description: 'Número de la imagen, para la acción ver.' } }, required: ['accion'] },
@@ -274,6 +296,39 @@ export class ToolsService {
         return `Hecho: el interesado número ${l.id}${estado ? ` quedó en estado "${estado.replace(/_/g, ' ')}"` : ''}${estado && nota ? ' y' : ''}${nota ? ' se le agregó la nota' : ''}. Confírmaselo en una frase, diciendo el nombre de pila.`;
       },
     };
+    // Portafolio por voz: Javier dicta un caso y el avatar lo guarda (o cambia uno que ya existe).
+    this.ownerTools.guardar_caso = {
+      description: 'Guarda en el portafolio un trabajo real que Javier acaba de contar (accion crear), o cambia uno que ya existe (accion cambiar). Úsala cuando diga "agrega al portafolio", "anota este proyecto", "cambia el resultado del caso X". ' +
+        'Antes de guardar un caso nuevo, repítele en dos frases cómo quedó y espera que diga que sí. Escribe solo lo que Javier dijo: no completes cifras ni clientes.',
+      parameters: { type: 'object', properties: {
+        accion: { type: 'string', enum: ['crear', 'cambiar'], description: 'crear = caso nuevo; cambiar = modificar o completar uno que ya está en el portafolio.' },
+        titulo: { type: 'string', description: 'Para crear: nombre corto del caso, por ejemplo "Bot de pedidos para una panadería". Para cambiar: el título del caso existente o una palabra que lo distinga (por ejemplo "ferretería").' },
+        sector: { type: 'string', description: 'Tipo de negocio o sector del cliente.' },
+        cliente: { type: 'string', description: 'Nombre del cliente SOLO si Javier dijo que se puede nombrar; si no, omítelo.' },
+        problema: { type: 'string', description: 'Qué problema tenía el cliente.' },
+        solucion: { type: 'string', description: 'Qué construyó o hizo Javier.' },
+        resultado: { type: 'string', description: 'Qué se logró, con las cifras que Javier haya dicho.' },
+        tecnologias: { type: 'string', description: 'Herramientas o tecnologías usadas, si las mencionó.' },
+        enlace: { type: 'string', description: 'Dirección web del proyecto, si la dio.' },
+        visible: { type: 'boolean', description: 'false para guardarlo oculto (los visitantes no lo oyen). Por defecto true.' },
+      }, required: ['accion', 'titulo'] },
+      run: async (args) => {
+        const titulo = String(args.titulo ?? '').trim(), change = args.accion === 'cambiar';
+        const titles = () => portfolio.list().slice(0, 12).map((c) => `"${c.title}"`).join(', ') || 'ninguno';
+        const exact = portfolio.byTitle(titulo), near = exact ? [exact] : change ? portfolio.find(titulo, true, true) : [];
+        if (!change && exact) return `NO se guardó: ya existe un caso con el título "${exact.title}". Si Javier quiere modificarlo, llama de nuevo con accion cambiar; si es otro trabajo, pídele un título distinto.`;
+        if (change && !near.length) return `NO se cambió nada: ningún caso coincide con "${titulo}". Casos que hay: ${titles()}. Pregúntale a cuál se refiere.`;
+        if (near.length > 1) return `NO se cambió nada: ${near.length} casos coinciden con "${titulo}"; pregúntale cuál: ${near.slice(0, 5).map((c) => `"${c.title}"`).join(', ')}.`;
+        const cur = change ? near[0] : undefined;
+        const opt = (v: unknown) => (v === undefined || v === null ? undefined : String(v));
+        const input = { title: cur ? undefined : titulo, sector: opt(args.sector), client: opt(args.cliente), problem: opt(args.problema), solution: opt(args.solucion), result: opt(args.resultado), tech: opt(args.tecnologias), link: opt(args.enlace), visible: typeof args.visible === 'boolean' ? args.visible : undefined };
+        if (!cur && !input.problem && !input.solution) return 'NO se guardó. Falta contar el caso: qué problema tenía el cliente y qué hizo Javier. Pregúntaselo.';
+        const saved = await portfolio.save(input, cur?.id);
+        const missing = [!saved.problem && 'el problema', !saved.solution && 'lo que hiciste', !saved.result && 'el resultado'].filter(Boolean);
+        return `${cur ? 'Caso actualizado' : 'Caso guardado'}: "${saved.title}"${Number(saved.visible) ? '; desde la próxima conversación lo puedes contar a los visitantes' : '; quedó oculto'}. ` +
+          (missing.length ? `Le falta ${missing.join(' y ')}: pregúntale si quiere agregarlo. ` : '') + (saved.image ? '' : 'No tiene foto: se sube desde el panel, pestaña Portafolio. ') + 'Confírmaselo en una frase.';
+      },
+    };
     this.ownerTools.consumo = {
       description: 'Dice cuánto ha consumido el avatar por día: minutos de escucha, tokens del modelo, caracteres de voz, búsquedas y encargos de Claude Code. Úsala cuando Javier pregunte por el consumo, el gasto o cuánto ha usado.',
       parameters: { type: 'object', properties: { dias: { type: 'number', description: 'Cuántos días hacia atrás (por defecto 7).' } }, required: [] },
@@ -305,6 +360,7 @@ export class ToolsService {
           ? `Interesados nuevos (${leads.length}): ` + asData('el formulario y las conversaciones públicas', leads.slice(0, 6).map((l) => `${l.name}${l.company ? ' de ' + l.company : ''}, ${l.interest.replace(/_/g, ' ')}, ${when(l.created_at)}${l.detail ? ': ' + l.detail.slice(0, 120) : ''}`).join(' | '))
           : 'Interesados nuevos: ninguno.');
         parts.push(`Interesados que siguen en estado "nuevo" (sin contactar): ${await this.leads.countByStatus('nuevo')}; de ellos llevan ${cfg.followupDays} días o más esperando: ${(await this.leads.pending(cfg.followupDays)).length}. Si hay alguno esperando, recuérdaselo.`);
+        parts.push(await visits.brief(iso).catch(() => 'Conversaciones con visitantes: no se pudo consultar.'));
         const calls = await this.leads.callsSince(iso);
         parts.push(calls.length
           ? `Llamadas de WhatsApp atendidas (${calls.length}): ` + asData('las llamadas de WhatsApp', calls.slice(0, 6).map((c) => `${c.who}, ${when(c.at)}, ${c.seconds} s${c.transcript ? ', dijo: ' + (c.transcript.split('\n').find((l) => l.startsWith('🧑')) ?? '').slice(2, 140) : ''}`).join(' | '))
@@ -451,6 +507,7 @@ export class ToolsService {
   async run(name: string, rawArgs: string, owner: boolean, ctx: ToolContext = { origin: '' }): Promise<ToolResult> {
     if (name.startsWith(PLANE_PREFIX)) return owner ? { text: asData('Plane', await this.plane.call(name, rawArgs)), untrusted: true } : { text: 'Error: esa herramienta no existe.' }; // doble control
     const tool = this.tools[name] ?? (owner ? this.ownerTools[name] : undefined);
+    ctx = { ...ctx, owner }; // lo decide el servidor, no quien llama
     if (!tool) return { text: `Error: la herramienta ${name} no existe.` };
     let args: Record<string, unknown> = {};
     try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return { text: 'Error: argumentos invalidos.' }; }
