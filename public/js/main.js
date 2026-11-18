@@ -141,10 +141,10 @@ function selectGallery(index, tell) {
   if (item.frame) bg.replaceChildren(frameOf(item.frame)); else { const img = new Image(); img.src = item.full || item.thumb; img.alt = ''; bg.replaceChildren(img); }
   bg.classList.add('on');
   const credit = $('gallery-credit'); credit.replaceChildren();
-  if (gallery.kind === 'fotos') { // condiciones de Pexels: enlace visible y credito al fotografo
-    const a = document.createElement('a'); a.href = item.link || 'https://www.pexels.com'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = item.credit ? `Foto de ${item.credit} en Pexels` : 'Fotos de Pexels';
+  if (gallery.kind === 'fotos') { // condiciones de Unsplash: credito al fotografo y a Unsplash, con enlace
+    const a = document.createElement('a'); a.href = item.link || 'https://unsplash.com'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = item.credit || 'Fotos de Unsplash';
     credit.append(a);
-  } else credit.textContent = item.label || '';
+  } else credit.textContent = gallery.kind === 'generadas' ? `${item.credit || ''} · ${item.label || ''}` : item.label || '';
   if (tell) socket?.send({ type: 'gallery', index: gallery.index });
 }
 function showGallery(msg) {

@@ -5,7 +5,7 @@ import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
 import { UsageService } from '../usage/usage.service';
-import { GalleryState, ImagesService } from '../images/images.service';
+import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
@@ -30,7 +30,9 @@ Crea exactamente 3 bocetos de la PORTADA, claramente distintos entre sí en pale
 /** Herramientas cuyo resultado completo es contenido de terceros. */
 const UNTRUSTED: Record<string, string> = { ver_interesados: 'el formulario y las conversaciones públicas', estado_taller: 'los informes de Claude Code', mostrar_proyecto: 'los informes de Claude Code' };
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
-export interface ToolContext { origin: string; music?: MusicState; gallery?: GalleryState; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
+export interface ToolContext { origin: string; music?: MusicState; gallery?: GalleryState;
+  /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
+  notify?: (note: { text: string; image?: GalleryItem }) => void; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
 interface Tool {
   description: string;
   parameters: Record<string, unknown>;
@@ -156,7 +158,7 @@ export class ToolsService {
         },
       },
     };
-    // Galeria en pantalla: fotos de Pexels (cualquier persona) y bocetos del taller (solo Javier). La seleccionada va de fondo.
+    // Galeria en pantalla: fotos de Unsplash (cualquier persona) y bocetos del taller (solo Javier). La seleccionada va de fondo.
     if (images.enabled) this.tools.buscar_imagenes = {
       description: 'Busca fotos sobre un tema y las muestra en la pantalla, numeradas, al lado del avatar. Úsala cuando la persona pida ver imágenes, fotos, ejemplos visuales o ideas de algo.',
       parameters: { type: 'object', properties: { tema: { type: 'string', description: 'Qué buscar, en pocas palabras (por ejemplo "gatitos", "cafetería moderna").' }, cuantas: { type: 'number', description: 'Cuántas mostrar, de 1 a 8 (por defecto 6).' } }, required: ['tema'] },
@@ -168,7 +170,7 @@ export class ToolsService {
         if (!items.length) return `No encontré fotos de "${tema}". Proponle otra palabra.`;
         Object.assign(ctx.gallery, { title: `Fotos de ${tema}`.slice(0, 60), kind: 'fotos', items, index: 0 });
         return { text: `En pantalla hay ${items.length} fotos de "${tema}", numeradas; la 1 está seleccionada y se ve de fondo. Dilo en una frase, sin describirlas todas, y cuéntale que puede pedir otra por su número o decir "la siguiente". ` +
-          `Lo que muestran: ${asData('Pexels', items.map((i, k) => `${k + 1}. ${i.label}`).join(' | '))}`, gallery: 'show', untrusted: true };
+          `Lo que muestran: ${asData('Unsplash', items.map((i, k) => `${k + 1}. ${i.label}`).join(' | '))}`, gallery: 'show', untrusted: true };
       },
     };
     this.tools.galeria = {
@@ -192,6 +194,27 @@ export class ToolsService {
           if (!rows.length) return 'Todavía no hay interesados registrados.';
           return rows.map((l) => `#${l.id} ${l.created_at.slice(0, 10)} | ${l.name}${l.company ? ' (' + l.company + ')' : ''} | ${l.contact} | ${l.interest} | ${l.status} | ${l.detail}`).join('\n');
         },
+      },
+    };
+    // Generacion de imagenes con IA (Magnific). Tarda: se lanza en segundo plano y el avatar avisa cuando esta en pantalla.
+    if (images.canGenerate) this.ownerTools.generar_imagen = {
+      description: 'Genera una imagen con inteligencia artificial a partir de una descripción y la muestra en pantalla cuando está lista (tarda cerca de un minuto). Úsala cuando Javier pida crear, generar, dibujar o inventar una imagen. Para fotos reales que ya existen usa buscar_imagenes.',
+      parameters: { type: 'object', properties: {
+        descripcion: { type: 'string', description: 'Qué debe verse, con todos los detalles que dio Javier: sujeto, estilo, colores, ambiente.' },
+        formato: { type: 'string', enum: ['horizontal', 'cuadrada', 'vertical'], description: 'Por defecto horizontal.' },
+      }, required: ['descripcion'] },
+      run: (args, ctx) => {
+        const prompt = String(args.descripcion ?? '').trim();
+        if (prompt.length < 5) return 'Falta describir la imagen. Pregúntale qué quiere ver.';
+        if (!ctx.gallery || !ctx.notify) return 'En esta conversación no hay pantalla donde mostrar imágenes.';
+        const no = images.reserveGeneration();
+        if (no) return `No se generó: ${no}.`;
+        const notify = ctx.notify;
+        void images.generate(prompt, String(args.formato ?? 'horizontal'))
+          .then((name) => notify({ text: '(Aviso del sistema: la imagen que pidió Javier ya se generó y está en pantalla, también de fondo. Díselo en una frase y pregúntale si le gusta o quiere otra versión.)',
+            image: { thumb: `/imagenes/${name}`, full: `/imagenes/${name}`, label: prompt.slice(0, 120), credit: 'Generada con IA (Magnific)' } }))
+          .catch((e) => notify({ text: `(Aviso del sistema: no se pudo generar la imagen que pidió Javier: ${(e as Error).message}. Díselo en una frase.)` }));
+        return 'La imagen se está generando en segundo plano; tarda cerca de un minuto. Dile que ya la estás creando y que se la muestras apenas esté; puede seguir hablando contigo.';
       },
     };
     this.ownerTools.consumo = {
@@ -326,8 +349,8 @@ export class ToolsService {
           let fotos = '';
           if (tema && images.enabled) try {
             const items = await images.search(tema, 8);
-            if (items.length) fotos = `\nFotos que puedes usar (de Pexels; enlázalas directo con estas direcciones, no las descargues, y pon en el pie de la página el crédito "Foto de <autor> en Pexels" con enlace):\n` +
-              items.map((i) => `- ${i.full} | autor: ${i.credit} | página: ${i.link} | muestra: ${i.label}`).join('\n');
+            if (items.length) fotos = `\nFotos que puedes usar (de Unsplash; enlázalas directo con estas direcciones exactas, no las descargues, y pon en el pie de la página el crédito de cada una con enlace a su página):\n` +
+              items.map((i) => `- ${i.full} | crédito: ${i.credit} | página: ${i.link} | muestra: ${i.label}`).join('\n');
           } catch { /* sin fotos: los bocetos van con formas y colores */ }
           return workshop.start(String(args.proyecto ?? ''), `${SKETCH_TASK}\nIdea de Javier: ${idea}${fotos}`, `${cfg.publicUrl || ctx.origin}/formulario`, true, args.modelo ? String(args.modelo) : undefined);
         },

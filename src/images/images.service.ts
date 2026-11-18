@@ -1,56 +1,135 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 
 /** Un elemento de la galeria en pantalla: una foto (thumb/full) o un boceto en vivo (frame = direccion de la pagina). */
 export interface GalleryItem { thumb?: string; full?: string; frame?: string; label: string; credit?: string; link?: string; }
 /** Galeria de la sesion: lo que se esta mostrando al lado del avatar y cual esta seleccionada (va de fondo). */
-export interface GalleryState { title: string; kind: 'fotos' | 'bocetos' | ''; items: GalleryItem[]; index: number; }
+export interface GalleryState { title: string; kind: 'fotos' | 'bocetos' | 'generadas' | ''; items: GalleryItem[]; index: number; }
+
+const FORMATS: Record<string, string> = { horizontal: 'widescreen_16_9', cuadrada: 'square_1_1', vertical: 'social_story_9_16' };
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Busqueda de fotos en Pexels (pedido por Javier el 2026-11-18). Documentacion leida ese dia:
- *  - GET https://api.pexels.com/v1/search?query=&per_page=(max 80)&orientation=landscape|portrait|square&locale=es-ES
- *    con cabecera `Authorization: <clave>` (sin "Bearer"). No tiene parametro de busqueda segura.
- *  - Respuesta: photos[] con url (pagina en Pexels), photographer, alt y src {tiny 280x200, medium (alto 350),
- *    landscape 1200x627, large, large2x, original...}.
- *  - Limite por defecto: 200 peticiones por hora y 20.000 al mes.
- *  - Condiciones: mostrar un enlace visible a Pexels ("Photos provided by Pexels") y dar credito al fotografo cuando se pueda.
- * SIN PROBAR con una clave real al escribir esto (Javier aun no la habia puesto): solo con respuestas simuladas.
+ * Imagenes para la galeria del avatar (pedido por Javier el 2026-11-18).
+ *
+ * BUSQUEDA: Unsplash (Pexels tenia pausada la entrega de claves). Documentacion leida ese dia:
+ *  - GET https://api.unsplash.com/search/photos?query=&per_page=(max 30)&orientation=landscape|portrait|squarish&content_filter=low|high
+ *    con cabecera `Authorization: Client-ID <clave de acceso>`. Modo demo: 50 peticiones por hora.
+ *  - EXIGEN usar directamente las direcciones `urls.*` que devuelve la API (enlazar, no copiar) y dar credito al fotografo
+ *    y a Unsplash. `content_filter=high` quita contenido no apto para publico joven.
+ *  - De cada resultado se usa urls.small, urls.regular, alt_description, user.name y links.html. Estos tres ultimos nombres
+ *    NO se confirmaron en la lectura de la documentacion (se cortaba antes): comprobar con la primera busqueda real.
+ *
+ * GENERACION: Magnific (la API de Freepik), modelo Mystic. Documentacion leida ese dia:
+ *  - POST https://api.magnific.com/v1/ai/mystic con cabecera `x-magnific-api-key`; cuerpo {prompt, aspect_ratio, resolution
+ *    (1k|2k|4k), filter_nsfw (true y no se puede apagar)} -> {data: {task_id, status}}.
+ *  - GET /v1/ai/mystic/{task-id} -> data.status CREATED|IN_PROGRESS|COMPLETED|FAILED y data.generated[] con la direccion.
+ *  - La direccion caduca a los 30 minutos: la imagen se descarga y se guarda en DATA_DIR/imagenes. Cobra por creditos;
+ *    el precio por imagen no esta en la documentacion.
+ * SIN PROBAR con claves reales al escribir esto (Javier aun no las habia puesto): solo con respuestas simuladas.
  */
 @Injectable()
 export class ImagesService {
   private readonly log = new Logger(ImagesService.name);
   private readonly cache = new Map<string, { at: number; items: GalleryItem[] }>();
-  private day = ''; private used = 0;
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
+  private day = ''; private used = 0; private generated = 0;
+  private readonly dir: string;
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) { this.dir = join(cfg.dataDir, 'imagenes'); }
 
-  get enabled() { return !!this.cfg.pexelsApiKey; }
+  /** Hay busqueda de fotos. */
+  get enabled() { return !!this.cfg.unsplashAccessKey; }
+  /** Hay generacion de imagenes. */
+  get canGenerate() { return !!this.cfg.magnificApiKey; }
   newState(): GalleryState { return { title: '', kind: '', items: [], index: 0 }; }
+  private today() { const t = new Date().toISOString().slice(0, 10); if (t !== this.day) { this.day = t; this.used = 0; this.generated = 0; } }
 
   async search(query: string, count = 6): Promise<GalleryItem[]> {
     const q = query.replace(/\s+/g, ' ').trim().slice(0, 100), key = q.toLowerCase(), n = Math.min(8, Math.max(1, Math.round(count) || 6));
     if (!q) return [];
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.items.slice(0, n);
-    const today = new Date().toISOString().slice(0, 10);
-    if (today !== this.day) { this.day = today; this.used = 0; }
+    this.today();
     if (this.used >= this.cfg.imagesDailySearches) throw new Error('se alcanzó el tope de búsquedas de imágenes de hoy');
-    this.used++; this.usage.add('pexels_searches');
-    const url = new URL('https://api.pexels.com/v1/search');
-    url.search = new URLSearchParams({ query: q, per_page: '8', orientation: 'landscape', locale: 'es-ES' }).toString();
+    this.used++; this.usage.add('image_searches');
+    const url = new URL('https://api.unsplash.com/search/photos');
+    url.search = new URLSearchParams({ query: q, per_page: '8', orientation: 'landscape', content_filter: 'high' }).toString();
     let res: Response;
-    try { res = await fetch(url, { headers: { Authorization: this.cfg.pexelsApiKey }, signal: AbortSignal.timeout(6000) }); }
-    catch (e) { throw new Error(`no se pudo conectar con Pexels (${(e as Error).name})`); }
+    try { res = await fetch(url, { headers: { Authorization: `Client-ID ${this.cfg.unsplashAccessKey}`, 'Accept-Version': 'v1' }, signal: AbortSignal.timeout(6000) }); }
+    catch (e) { throw new Error(`no se pudo conectar con Unsplash (${(e as Error).name})`); }
     const d: any = await res.json().catch(() => ({}));
-    if (!res.ok) { this.log.warn(`Pexels respondió ${res.status}`); throw new Error(`Pexels respondió ${res.status}`); }
+    if (!res.ok) { this.log.warn(`Unsplash respondió ${res.status}`); throw new Error(res.status === 403 ? 'Unsplash llegó a su límite por hora; se puede reintentar más tarde' : `Unsplash respondió ${res.status}`); }
     const clean = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
-    const https = (v: unknown) => { const s = String(v ?? ''); return /^https:\/\/[a-z0-9.-]+\.pexels\.com\//i.test(s) ? s : ''; }; // solo direcciones de Pexels
-    const items: GalleryItem[] = (Array.isArray(d.photos) ? d.photos : []).map((p: any) => ({
-      thumb: https(p?.src?.medium), full: https(p?.src?.landscape) || https(p?.src?.large), label: clean(p?.alt, 120) || q,
-      credit: clean(p?.photographer, 60), link: https(p?.url),
-    })).filter((i: GalleryItem) => i.thumb && i.full);
+    const own = (v: unknown) => { const s = String(v ?? ''); return /^https:\/\/([a-z0-9-]+\.)?unsplash\.com\//i.test(s) ? s : ''; }; // solo direcciones de Unsplash
+    const items: GalleryItem[] = (Array.isArray(d.results) ? d.results : []).map((p: any) => {
+      const author = clean(p?.user?.name, 60);
+      return { thumb: own(p?.urls?.small), full: own(p?.urls?.regular), label: clean(p?.alt_description ?? p?.description, 120) || q,
+        credit: author ? `Foto de ${author} en Unsplash` : 'Foto de Unsplash', link: own(p?.links?.html) || 'https://unsplash.com' };
+    }).filter((i: GalleryItem) => i.thumb && i.full);
     this.cache.set(key, { at: Date.now(), items });
     if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value!);
     return items.slice(0, n);
+  }
+
+  /** Antes de lanzar una generacion: '' si se puede, o el motivo por el que no. Cuenta el intento. */
+  reserveGeneration(): string {
+    if (!this.canGenerate) return 'la generación de imágenes no está configurada';
+    this.today();
+    if (this.generated >= this.cfg.imagesDailyGenerations) return 'se alcanzó el tope de imágenes generadas de hoy';
+    this.generated++; this.usage.add('image_generations');
+    return '';
+  }
+
+  /**
+   * Genera una imagen con Magnific y la guarda en DATA_DIR/imagenes. Tarda de varios segundos a mas de un minuto.
+   * Devuelve el nombre del archivo guardado (se sirve en /imagenes/<nombre>).
+   */
+  async generate(prompt: string, format = 'horizontal', signal?: AbortSignal): Promise<string> {
+    const headers = { 'x-magnific-api-key': this.cfg.magnificApiKey, 'Content-Type': 'application/json' };
+    const api = 'https://api.magnific.com/v1/ai/mystic';
+    const res = await fetch(api, { method: 'POST', headers, body: JSON.stringify({ prompt: prompt.slice(0, 1500), aspect_ratio: FORMATS[format] ?? FORMATS.horizontal, resolution: '1k' }), signal: signal ?? AbortSignal.timeout(20_000) });
+    const d: any = await res.json().catch(() => ({}));
+    const id = String(d?.data?.task_id ?? '');
+    if (!res.ok || !/^[\w-]{6,80}$/.test(id)) throw new Error(`Magnific respondió ${res.status}${res.status === 401 ? ' (clave inválida)' : ''}`);
+    let urlOut = String(d?.data?.generated?.[0] ?? '');
+    for (let i = 0; !urlOut && i < 60; i++) { // hasta ~2 minutos
+      await wait(2000);
+      const r = await fetch(`${api}/${id}`, { headers, signal: AbortSignal.timeout(10_000) });
+      const t: any = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`Magnific respondió ${r.status} al consultar la imagen`);
+      if (t?.data?.status === 'FAILED') throw new Error('Magnific no pudo generar la imagen');
+      if (t?.data?.status === 'COMPLETED') { urlOut = String(t.data.generated?.[0] ?? ''); if (!urlOut) throw new Error('Magnific terminó sin entregar la imagen (pudo bloquearla su filtro de contenido)'); }
+    }
+    if (!urlOut) throw new Error('la imagen tardó demasiado');
+    if (!/^https:\/\//.test(urlOut)) throw new Error('Magnific devolvió una dirección no válida');
+    const img = await fetch(urlOut, { signal: AbortSignal.timeout(30_000) });
+    const type = (img.headers.get('content-type') ?? '').split(';')[0];
+    if (!img.ok || !/^image\/(jpeg|png|webp)$/.test(type)) throw new Error('no se pudo descargar la imagen generada');
+    const buf = Buffer.from(await img.arrayBuffer());
+    if (buf.length > 20 * 1024 * 1024) throw new Error('la imagen generada es demasiado grande');
+    mkdirSync(this.dir, { recursive: true });
+    const name = `${randomBytes(12).toString('hex')}.${type === 'image/png' ? 'png' : type === 'image/webp' ? 'webp' : 'jpg'}`;
+    writeFileSync(join(this.dir, name), buf);
+    this.prune();
+    this.log.log(`imagen generada (${Math.round(buf.length / 1024)} KB)`);
+    return name;
+  }
+
+  /** Ruta en disco de una imagen generada, o null si el nombre no es valido o no existe. */
+  file(name: string): string | null {
+    if (!/^[a-f0-9]{24}\.(jpg|png|webp)$/.test(name)) return null;
+    const full = join(this.dir, name);
+    try { return statSync(full).isFile() ? full : null; } catch { return null; }
+  }
+
+  /** Se conservan las 200 imagenes mas recientes. */
+  private prune() {
+    try {
+      const files = readdirSync(this.dir).map((n) => ({ n, t: statSync(join(this.dir, n)).mtimeMs })).sort((a, b) => b.t - a.t);
+      for (const f of files.slice(200)) unlinkSync(join(this.dir, f.n));
+    } catch { /* carpeta sin permisos o vacia */ }
   }
 }

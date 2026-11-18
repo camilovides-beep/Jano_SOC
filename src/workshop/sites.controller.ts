@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Header, HttpCode, HttpException, Options, Param, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { ImagesService } from '../images/images.service';
 import { LeadsService } from '../leads/leads.service';
 import { WorkshopService } from './workshop.service';
 
@@ -14,12 +15,21 @@ const HOUR = 3600_000;
 @Controller()
 export class SitesController {
   private readonly hits = new Map<string, number[]>();
-  constructor(private readonly workshop: WorkshopService, private readonly leads: LeadsService) {}
+  constructor(private readonly workshop: WorkshopService, private readonly leads: LeadsService, private readonly images: ImagesService) {}
 
   @Get('p/:slug')
   root(@Req() req: Request, @Param('slug') slug: string, @Res() res: Response) {
     if (!req.path.endsWith('/')) return res.redirect(302, `/p/${encodeURIComponent(slug)}/`); // las rutas relativas necesitan la barra final
     return this.serve(slug, '', res);
+  }
+
+  /** Imagenes generadas con IA (nombre al azar, imposible de adivinar). */
+  @Get('imagenes/:name')
+  generated(@Param('name') name: string, @Res() res: Response) {
+    const file = this.images.file(name);
+    if (!file) throw new HttpException('no encontrado', 404);
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Cache-Control', 'private, max-age=86400');
+    return res.sendFile(file);
   }
 
   @Get('p/:slug/{*path}')

@@ -8,7 +8,7 @@ export const USAGE_KEYS = [
   'deepgram_s', 'deepgram_susp_s', 'deepgram_pre_s',
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
-  'nvidia_calls', 'youtube_searches', 'pexels_searches',
+  'nvidia_calls', 'youtube_searches', 'image_searches', 'image_generations',
   'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd',
 ] as const;
 export type UsageKey = (typeof USAGE_KEYS)[number];
@@ -78,7 +78,8 @@ export class UsageService implements OnModuleDestroy {
     if (d.eleven_chars) parts.push(`voz (ElevenLabs) ${n(d.eleven_chars)} caracteres`);
     if (d.nvidia_calls) parts.push(`búsquedas en la base de conocimiento ${n(d.nvidia_calls)}`);
     if (d.youtube_searches) parts.push(`búsquedas de YouTube ${n(d.youtube_searches)}`);
-    if (d.pexels_searches) parts.push(`búsquedas de fotos ${n(d.pexels_searches)}`);
+    if (d.image_searches) parts.push(`búsquedas de fotos ${n(d.image_searches)}`);
+    if (d.image_generations) parts.push(`imágenes generadas ${n(d.image_generations)}`);
     if (d.claude_jobs) parts.push(`Claude Code ${n(d.claude_jobs)} encargos, ${min(d.claude_s)}${d.claude_usd ? `, equivalente a ${d.claude_usd.toFixed(2)} dólares de API (va por la suscripción)` : ''}`);
     if (d.estimado_usd !== undefined) parts.push(`costo estimado con tus precios ${d.estimado_usd.toFixed(2)} dólares`);
     return parts.join('; ') + '.';

@@ -30,7 +30,7 @@ import { ImagesService } from './images/images.service';
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/p/{*path}', '/formulario'],
+      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/p/{*path}', '/imagenes/{*path}', '/formulario'],
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
