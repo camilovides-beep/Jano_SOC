@@ -63,9 +63,23 @@ interface Session {
   lastSpoken: string;    // lo ultimo que dijo el avatar (para reconocer su propio eco con la voz del navegador)
   lastTurnEnd: number;   // cuando termino el ultimo turno (para no interrumpir con el estado del taller)
   lastStatus: number;    // ultima vez que se conto en voz como va el taller
+  suspended: boolean;    // modo suspension: oye pero no responde hasta que digan la palabra para despertar
+  suspendedAt: number;
+  waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
+  canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
 }
 
 const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
+const plainWords = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9ñ]+/).filter(Boolean);
+
+/**
+ * Modo suspension (pedido por Javier el 2026-11-17): si la frase ENTERA es una orden de callarse, el avatar deja de
+ * responder. Se compara la frase completa (sin muletillas) para que "para" dentro de otra frase no lo suspenda.
+ */
+const SUSPEND_FILLERS = new Set(['javi', 'javier', 'por', 'favor', 'ya', 'oye', 'un', 'momento', 'rato', 'ahora', 'porfa']);
+const SUSPEND_ORDERS = new Set(['silenciate', 'silencio', 'hazsilencio', 'guardasilencio', 'callate', 'para', 'parale', 'detente', 'suspendete', 'suspension',
+  'modosuspension', 'entraensuspension', 'ponteensuspension', 'duermete', 'aduermete', 'adormir', 'descansa', 'pausa', 'ponteenpausa', 'dejadeescuchar', 'noescuches', 'nomeescuches']);
+const isSuspendOrder = (text: string, names: string[]) => { const w = plainWords(text); return w.length <= 6 && SUSPEND_ORDERS.has(w.filter((x) => !SUSPEND_FILLERS.has(x) && !names.includes(x)).join('')); };
 
 /** Como captar interesados. Va en sesiones publicas: el avatar existe para conseguirle clientes a Javier. */
 const LEAD_RULES = `
@@ -154,6 +168,7 @@ ${taller ? '- Cuando acabes de iniciar un encargo de programación (y no haya m�
  *              { type: 'card', title, lines, qr?, caption? }  (tarjeta en pantalla)
  *              { type: 'reaction', name } | { type: 'scene', name }  (gesto y emojis / fondo, segun lo que pidio el modelo)
  *              { type: 'interrupt' }  (el usuario hablo encima: cortar el audio)
+ *              { type: 'suspend', on, notice? }  (modo suspension; el cliente despierta con { type: 'wake' } al tocar la pantalla)
  */
 @WebSocketGateway({ path: '/ws' })
 export class SessionGateway implements OnGatewayConnection {
@@ -181,6 +196,7 @@ export class SessionGateway implements OnGatewayConnection {
     const text = `(Aviso del taller, escrito por el sistema: Claude Code ${p.status === 'error' ? 'NO pudo terminar' : 'terminó'} el encargo del proyecto "${p.name}". ` +
       `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}Informe de Claude Code: ${(p.lastSummary ?? 'sin informe').slice(0, 1500)})`;
     s.notes.push({ text, card: card ?? undefined, slug });
+    if (s.suspended) this.send(client, { type: 'suspend', on: true, notice: this.suspendNotice(s) }); // suspendido: aviso en pantalla, sin voz
     this.pumpNotes(client, s);
   }
 
@@ -190,7 +206,7 @@ export class SessionGateway implements OnGatewayConnection {
     if (!w.active) return;
     s.lastActivity = Date.now(); // la sesion no se cierra por inactividad mientras hay un encargo en curso
     const every = this.cfg.tallerStatusSeconds * 1000, now = Date.now();
-    if (!every || s.turn || s.clientPlaying || s.finals.length || s.notes.length) return;
+    if (!every || s.suspended || s.turn || s.clientPlaying || s.finals.length || s.notes.length) return;
     if (now - Math.max(s.lastStatus, now - (w.seconds ?? 0) * 1000) < every || now - s.lastTurnEnd < 15_000) return;
     s.lastStatus = now;
     const min = Math.floor((w.seconds ?? 0) / 60), time = min < 1 ? 'menos de un minuto' : min === 1 ? 'un minuto' : `${min} minutos`;
@@ -204,7 +220,7 @@ export class SessionGateway implements OnGatewayConnection {
   /** Cuenta el siguiente aviso cuando nadie esta hablando (ni Javier ni el avatar). */
   private pumpNotes(client: WebSocket, s: Session) {
     clearTimeout(s.noteTimer);
-    if (!s.ready || !s.notes.length) return;
+    if (!s.ready || !s.notes.length || s.suspended) return; // suspendido: se cuentan al despertar
     if (s.turn || s.clientPlaying || s.finals.length) { s.noteTimer = setTimeout(() => this.pumpNotes(client, s), 1000); return; }
     const note = s.notes.shift()!;
     if (note.card) this.send(client, { type: 'card', ...(note.card as object) });
@@ -217,7 +233,7 @@ export class SessionGateway implements OnGatewayConnection {
     const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
     const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
-    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0, browserTts: this.cfg.ttsProvider === 'browser' && !internal, lastSpoken: '', lastPlayEnd: 0,
+    const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0, suspended: false, suspendedAt: 0, waking: false, canSuspend: !internal, browserTts: this.cfg.ttsProvider === 'browser' && !internal, lastSpoken: '', lastPlayEnd: 0,
       origin: req?.headers?.host ? `${String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${req.headers.host}` : '' };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
     client.on('message', (raw, isBinary) => {
@@ -234,6 +250,7 @@ export class SessionGateway implements OnGatewayConnection {
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
+      if (msg?.type === 'wake') { if (s.suspended) { this.wake(client, s); this.greetAwake(client, s); } return; } // toque en la pantalla
       if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
     });
@@ -271,11 +288,16 @@ export class SessionGateway implements OnGatewayConnection {
       // Con musica sonando la sesion tambien sigue abierta (para obedecer "subele" o "quitala"), hasta MUSIC_MAX_MINUTES.
       const listening = !!s.music?.playing && Date.now() - s.music.since < this.cfg.musicMaxMinutes * 60_000;
       if (listening) s.lastActivity = Date.now();
-      const working = job || listening;
+      // Suspendido: la sesion sigue abierta para oir la palabra que lo despierta, hasta SUSPEND_MAX_MINUTES.
+      if (s.suspended) {
+        if (Date.now() - s.suspendedAt > this.cfg.suspendMaxMinutes * 60_000) { this.send(client, { type: 'error', reason: 'suspension' }); client.close(4408, 'suspension'); return; }
+        s.lastActivity = Date.now();
+      }
+      const working = job || listening || s.suspended;
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
-    this.send(client, { type: 'ready', owner: s.owner, tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate });
+    this.send(client, { type: 'ready', owner: s.owner, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate });
     const greeting = s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
@@ -313,6 +335,13 @@ export class SessionGateway implements OnGatewayConnection {
 
   // ---------- escucha ----------
   private onTranscript(client: WebSocket, s: Session, text: string, isFinal: boolean, speechFinal: boolean, lang?: string) {
+    if (s.suspended) {
+      // Suspendido: lo que se oye se descarta (no va al modelo, ni a la pantalla, ni se guarda). Solo cuenta la palabra
+      // para despertar; mientras suena la despedida no se atiende, para que no lo despierte su propia voz.
+      s.finals = []; s.langs = [];
+      if (!text || s.turn || s.clientPlaying || Date.now() - s.suspendedAt < 2500 || !this.hasWakeWord(text)) return;
+      this.wake(client, s);
+    }
     if (text) {
       s.lastActivity = Date.now();
       if (lang) s.lastLang = lang;
@@ -321,6 +350,7 @@ export class SessionGateway implements OnGatewayConnection {
       const busy = !!s.turn || s.clientPlaying;
       if (busy) {
         // El avatar esta respondiendo. Solo se interrumpe si se reconocen varias palabras (evita cortes por eco o ruido).
+        if (isFinal && s.canSuspend && isSuspendOrder(current, this.cfg.wakeWords) && !this.isEcho(s, current)) { this.suspend(client, s); return; } // "para", "silénciate"
         if (words(current) >= this.cfg.bargeInWords && !this.isEcho(s, current)) this.interrupt(client, s);
       }
       if (!(s.turn || s.clientPlaying)) {
@@ -338,10 +368,16 @@ export class SessionGateway implements OnGatewayConnection {
     const text = s.finals.join(' ').trim();
     const lang = s.langs.sort((a, b) => s.langs.filter((v) => v === b).length - s.langs.filter((v) => v === a).length)[0] ?? 'es';
     s.finals = []; s.langs = []; clearTimeout(s.specTimer);
-    if (!text) return;
+    if (!text || s.suspended) return;
+    if (s.waking) { // acaba de despertar: si solo dijeron su nombre, responde que ya esta; si siguio una pregunta, la contesta
+      s.waking = false;
+      const rest = plainWords(text).filter((w) => !this.cfg.wakeWords.includes(w));
+      if (rest.length < 2) { this.greetAwake(client, s); return; }
+    }
     if (s.turn || s.clientPlaying) return; // palabras sueltas mientras el avatar habla: se descartan
+    if (s.canSuspend && isSuspendOrder(text, this.cfg.wakeWords)) { this.suspend(client, s); return; }
     if (this.isEcho(s, text) && Date.now() - Math.max(s.lastTurnEnd, s.lastPlayEnd) < 6000) return; // el microfono oyo la cola de la voz del navegador
-    void this.respond(client, s, text, lang);
+    void this.respond(client, s, text, lang).then(() => this.pumpNotes(client, s));
   }
 
   /**
@@ -355,6 +391,43 @@ export class SessionGateway implements OnGatewayConnection {
     const list = wordsOf(heard);
     if (!list.length || !spoken.size) return false;
     return list.filter((w) => spoken.has(w)).length / list.length >= 0.7;
+  }
+
+  // ---------- suspension ----------
+  private hasWakeWord(text: string) { return plainWords(text).some((w) => this.cfg.wakeWords.includes(w)); }
+  private suspendNotice(s: Session) { return s.notes.length ? (s.notes.length === 1 ? 'El taller terminó un encargo' : `El taller terminó ${s.notes.length} encargos`) : ''; }
+
+  /** Deja de responder: se despide en una frase y queda oyendo solo la palabra para despertar. */
+  private suspend(client: WebSocket, s: Session) {
+    if (s.suspended) return;
+    this.log.log(`sesion #${s.n}: suspendida`);
+    if (s.turn || s.clientPlaying) this.interrupt(client, s);
+    s.spec?.ctrl.abort(); s.spec = undefined; clearTimeout(s.specTimer); clearTimeout(s.noteTimer); s.finals = []; s.langs = [];
+    s.suspended = true; s.suspendedAt = Date.now(); s.waking = false;
+    this.send(client, { type: 'suspend', on: true, notice: this.suspendNotice(s) });
+    const turn = this.newTurn(s);
+    this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
+    this.say(client, s, turn, 'Listo, me quedo callado. Llámame por mi nombre cuando me necesites.'); // sin decir la palabra: se despertaria solo
+    void this.finish(client, s, turn, 'suspension');
+  }
+
+  private wake(client: WebSocket, s: Session) {
+    if (!s.suspended) return;
+    this.log.log(`sesion #${s.n}: despierta tras ${Math.round((Date.now() - s.suspendedAt) / 1000)} s`);
+    s.suspended = false; s.waking = true; s.lastActivity = Date.now(); s.finals = []; s.langs = [];
+    this.send(client, { type: 'suspend', on: false });
+    // Si despues del nombre no llega nada mas (ni fin de frase), igual contesta.
+    s.timers.push(setTimeout(() => { if (s.ready && s.waking && !s.suspended && !s.finals.length) this.greetAwake(client, s); }, 2500));
+  }
+
+  /** "Aquí estoy" y, si hay avisos del taller guardados, los cuenta enseguida. */
+  private greetAwake(client: WebSocket, s: Session) {
+    s.waking = false;
+    if (s.turn || s.clientPlaying) return;
+    const turn = this.newTurn(s);
+    this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
+    this.say(client, s, turn, s.notes.length ? 'Aquí estoy. Tengo novedades del taller.' : 'Aquí estoy. ¿En qué te ayudo?');
+    void this.finish(client, s, turn, 'despertar').then(() => this.pumpNotes(client, s));
   }
 
   private interrupt(client: WebSocket, s: Session) {

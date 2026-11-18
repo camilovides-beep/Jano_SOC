@@ -27,6 +27,17 @@ export function emojiBurst(layer, name) {
   }
 }
 
+/** Un emoji suelto que sube junto a la cabeza (los "Zzz" al dormir, las notas al oir musica). */
+export function floatEmoji(layer, set) {
+  const el = document.createElement('span');
+  el.className = 'emoji'; el.textContent = set[(Math.random() * set.length) | 0];
+  el.style.left = `${61 + Math.random() * 6}%`; el.style.top = `${24 + Math.random() * 10}%`;
+  el.style.fontSize = `${24 + Math.random() * 18}px`;
+  el.style.setProperty('--dx', `${30 + Math.random() * 50}px`); el.style.setProperty('--rot', `${(Math.random() - 0.5) * 30}deg`);
+  el.addEventListener('animationend', () => el.remove());
+  layer.appendChild(el);
+}
+
 /** Fondo animado detras del avatar. show('matrix' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
 export function createBackdrop(canvas) {
   const ctx = canvas.getContext('2d');
@@ -138,6 +149,56 @@ export function createBackdrop(canvas) {
       if (i === codeLines.length - 1 && (Date.now() >> 8) % 2) { ctx.fillStyle = '#c0caf5'; ctx.fillRect(x, y + lh * 0.15, ch * 0.5, lh * 0.55); } // cursor
     }
   };
+  // Fondos del modo suspension.
+  draw.noche = () => { // cielo de noche con luna, para dormir
+    t += 0.03; sky('#070b1c', '#1a2244');
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i];
+      ctx.fillStyle = `rgba(225, 232, 255, ${0.25 + 0.6 * Math.abs(Math.sin(t * (0.4 + (i % 7) * 0.13) + i))})`;
+      ctx.beginPath(); ctx.arc((s.x + 1) / 2 * W, (s.y + 1) / 2 * H, size * (0.05 + (i % 3) * 0.03), 0, 6.283); ctx.fill();
+    }
+    const mx = W * 0.17, my = H * 0.2, r = Math.min(W, H) * 0.075;
+    const g = ctx.createRadialGradient(mx, my, r * 0.6, mx, my, r * 3); g.addColorStop(0, 'rgba(255, 244, 200, 0.28)'); g.addColorStop(1, 'rgba(255, 244, 200, 0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fdf3c4'; ctx.beginPath(); ctx.arc(mx, my, r, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#0a1024'; ctx.beginPath(); ctx.arc(mx + r * 0.42, my - r * 0.18, r * 0.86, 0, 6.283); ctx.fill(); // media luna
+  };
+  draw.ecualizador = () => { // barras que suben y bajan, para cuando oye musica
+    t += 0.09; sky('#1a1033', '#3b1d5e');
+    const n = 28, bw = W / n;
+    for (let i = 0; i < n; i++) {
+      const h = (0.12 + 0.3 * Math.abs(Math.sin(t * 1.7 + i * 0.6)) + 0.22 * Math.abs(Math.sin(t * 2.9 + i * 1.3))) * H;
+      const g = ctx.createLinearGradient(0, H - h, 0, H); g.addColorStop(0, '#ff7ad9'); g.addColorStop(1, '#6a5cff');
+      ctx.fillStyle = g; ctx.fillRect(i * bw + bw * 0.14, H - h, bw * 0.72, h);
+    }
+  };
+  // Ping-pong que se juega solo. La paleta derecha (naranja) es la del avatar. La pelota queda en `ball` para que la siga con la mirada.
+  const pong = { x: 0.5, y: 0.5, vx: 0.012, vy: 0.008, l: 0.5, r: 0.5, sl: 0, sr: 0, wait: 0, errL: 0, errR: 0 };
+  let onScore = null;
+  const serve = (dir) => { pong.x = 0.5; pong.y = 0.3 + Math.random() * 0.4; pong.vx = dir * 0.013; pong.vy = (Math.random() - 0.5) * 0.02; pong.wait = 14; pong.errL = (Math.random() - 0.5) * 0.4; pong.errR = (Math.random() - 0.5) * 0.4; };
+  draw.pong = () => {
+    const ph = 0.2, px = 0.035;
+    if (pong.wait > 0) pong.wait--;
+    else {
+      pong.x += pong.vx; pong.y += pong.vy;
+      if (pong.y < 0.03 || pong.y > 0.97) { pong.vy = -pong.vy; pong.y = Math.max(0.03, Math.min(0.97, pong.y)); }
+      // Cada paleta persigue la pelota con un error que cambia en cada saque: asi a veces falla.
+      const chase = (cur, err, coming) => Math.max(ph / 2, Math.min(1 - ph / 2, cur + Math.max(-0.017, Math.min(0.017, (coming ? pong.y + err : 0.5) - cur))));
+      pong.l = chase(pong.l, pong.errL, pong.vx < 0); pong.r = chase(pong.r, pong.errR, pong.vx > 0);
+      const hit = (pad) => Math.abs(pong.y - pad) < ph / 2 + 0.02;
+      if (pong.vx < 0 && pong.x < px + 0.012) { if (hit(pong.l)) { pong.vx = Math.min(0.024, -pong.vx * 1.06); pong.vy += (pong.y - pong.l) * 0.06; pong.errR = (Math.random() - 0.5) * 0.4; } else if (pong.x < 0) { pong.sr++; onScore?.('avatar', pong.sr, pong.sl); serve(1); } }
+      if (pong.vx > 0 && pong.x > 1 - px - 0.012) { if (hit(pong.r)) { pong.vx = Math.max(-0.024, -pong.vx * 1.06); pong.vy += (pong.y - pong.r) * 0.06; pong.errL = (Math.random() - 0.5) * 0.4; } else if (pong.x > 1) { pong.sl++; onScore?.('rival', pong.sr, pong.sl); serve(-1); } }
+      if (pong.sl >= 7 || pong.sr >= 7) { pong.sl = 0; pong.sr = 0; }
+    }
+    ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = size * 0.2; ctx.setLineDash([size, size]); ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = `700 ${size * 4}px ui-monospace, Menlo, monospace`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText(String(pong.sl), W * 0.2, size * 6); ctx.fillStyle = 'rgba(255,150,90,0.75)'; ctx.fillText(String(pong.sr), W * 0.8, size * 6); ctx.textAlign = 'start';
+    const pw = size * 0.8;
+    ctx.fillStyle = '#e8ecf5'; ctx.fillRect(px * W - pw, (pong.l - ph / 2) * H, pw, ph * H);
+    ctx.fillStyle = '#ff7a59'; ctx.fillRect((1 - px) * W, (pong.r - ph / 2) * H, pw, ph * H);
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pong.x * W, pong.y * H, size * 0.75, 0, 6.283); ctx.fill();
+  };
   window.addEventListener('resize', () => { if (current) resize(); });
   return {
     show(name) {
@@ -148,5 +209,8 @@ export function createBackdrop(canvas) {
       else setTimeout(() => { if (!current) { clearInterval(timer); timer = null; } }, 1400); // sigue animando durante el fundido
     },
     get current() { return current; },
+    /** Pelota del ping-pong en coordenadas de pantalla (-1..1) y aviso de cada punto: fn('avatar' | 'rival'). */
+    get ball() { return { x: pong.x * 2 - 1, y: 1 - pong.y * 2 }; },
+    set onScore(fn) { onScore = fn; },
   };
 }

@@ -4,6 +4,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 
+const PHONES = { x: 1.0, top: 1.04, earY: -0.05, z: -0.05 }; // proporciones de los audifonos respecto a la caja del modelo
+
 export async function createAvatar(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -49,6 +51,10 @@ export async function createAvatar(canvas) {
     const glow = new THREE.Mesh(geo, lens.mat); glow.renderOrder = 11; glow.visible = false; glow.position.z = 0.002;
     lensMesh.add(glow); lens.mesh = glow;
   }
+  // Audifonos para cuando escucha musica en suspension: diadema y dos copas, hechos aqui (el modelo no los trae).
+  const phones = new THREE.Group(); phones.visible = false;
+  // Actividades del modo suspension: dormir, leer, musica, juego (en el juego solo sigue la pelota con la mirada).
+  let act = null, actT = 0, sleepK = 0, musicK = 0, readK = 0;
   const LENS_COLORS = ['#8fe3ff', '#b6ffb0', '#ffe08a', '#d7c2ff', '#ffffff'];
   function drawLens(dt) {
     const c = lens.ctx, W = 256, H = 192, lh = 15;
@@ -72,6 +78,21 @@ export async function createAvatar(canvas) {
     const dist = Math.max(size.y / 2 / t, size.x / 2 / (t * camera.aspect)) * 1.2;
     camera.position.set(0, center.y + size.y * 0.02, center.z + dist); camera.lookAt(0, center.y - size.y * 0.02, center.z);
     camera.updateProjectionMatrix();
+  }
+  {
+    const dark = new THREE.MeshStandardMaterial({ color: 0x20242c, roughness: 0.55 }), color = new THREE.MeshStandardMaterial({ color: 0x4f8cff, roughness: 0.4 });
+    const rx = size.x * 0.5 * PHONES.x, top = size.y * 0.5 * PHONES.top, earY = center.y + size.y * PHONES.earY, zc = center.z + size.z * PHONES.z;
+    const band = new THREE.Mesh(new THREE.TorusGeometry(rx, size.x * 0.035, 10, 40, Math.PI), dark);
+    band.scale.y = (center.y + top - earY) / rx; band.position.set(0, earY, zc);
+    phones.add(band);
+    for (const side of [-1, 1]) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(size.y * 0.13, size.y * 0.13, size.x * 0.09, 28), color);
+      cup.rotation.z = Math.PI / 2; cup.scale.z = 0.8; cup.position.set(side * rx, earY, zc);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(size.y * 0.145, size.y * 0.145, size.x * 0.04, 28), dark);
+      pad.rotation.z = Math.PI / 2; pad.scale.z = 0.8; pad.position.set(side * (rx - size.x * 0.05), earY, zc);
+      phones.add(cup, pad);
+    }
+    pivot.add(phones);
   }
   resize(); window.addEventListener('resize', resize); window.addEventListener('orientationchange', resize);
 
@@ -121,6 +142,16 @@ export async function createAvatar(canvas) {
       z: Math.sin(clock * 0.31) * 0.012 + (listening ? 0.03 : 0) + (thinking ? -0.035 : 0),
     };
     if (state === 'idle') { goal.y += Math.sin(clock * 0.23) * 0.2; goal.x += Math.sin(clock * 0.17) * 0.04; } // en espera: gira despacio buscando a alguien
+    // Actividades de la suspension: cada una entra y sale con un fundido.
+    actT += dt;
+    const ease = (v, to, tau) => v + (to - v) * (1 - Math.exp(-dt / tau));
+    sleepK = ease(sleepK, act === 'dormir' && !expr.name ? 1 : 0, act === 'dormir' && !expr.name ? 0.7 : 0.12); // un sobresalto le abre los ojos
+    musicK = ease(musicK, act === 'musica' ? 1 : 0, 0.35);
+    readK = ease(readK, act === 'leer' ? 1 : 0, 0.4);
+    if (sleepK > 0.01) { const nod = (actT * 0.2) % 1; goal.x += (0.09 + nod * nod * 0.17) * sleepK; goal.z += 0.1 * sleepK; goal.y *= 1 - 0.7 * sleepK; } // cabecea: cae despacio y se endereza
+    if (musicK > 0.01) { goal.x += Math.sin(actT * 9.4) * 0.045 * musicK; goal.z += Math.sin(actT * 4.7) * 0.06 * musicK; }            // lleva el ritmo
+    if (readK > 0.01) { goal.x += 0.11 * readK; goal.y *= 1 - 0.6 * readK; gazeGoal.x = 0.1 * readK; gazeGoal.y = (0.13 - ((actT % 2.4) / 2.4) * 0.26) * readK; } // recorre los renglones
+    phones.visible = musicK > 0.03; phones.scale.setScalar(0.6 + 0.4 * musicK);
     // Si el puntero lleva un rato quieto, vuelve a mirar al frente.
     const active = clock - pointer.at < 4 ? 1 : 0;
     const kf = 1 - Math.exp(-dt / 0.12);
@@ -152,12 +183,13 @@ export async function createAvatar(canvas) {
     browPulse = Math.max(0, browPulse - dt / 0.6);
     const browGoal = Math.max(browPulse > 0 ? Math.sin(Math.min(1, browPulse) * Math.PI) * 0.8 : 0, listening ? 0.22 : 0, thinking ? 0.12 : 0);
     brow += (browGoal - brow) * (1 - Math.exp(-dt / 0.08)); setMorph('browUp', Math.max(brow, exBrow * k));
-    setMorph('eyeBlink', Math.min(1, Math.max(blink * 1.05, exBlink * k)));
+    setMorph('eyeBlink', Math.min(1, Math.max(blink * 1.05, exBlink * k, sleepK, musicK * 0.3)));
+    exprMouth.viseme_aa = 0.1 * sleepK; // duerme con la boca un poco abierta
     const smileGoal = listening ? 0.25 : (state === 'idle' ? 0.15 : 0);
-    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile * (1 - exSad * k), exSmile * k));
+    smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile * (1 - exSad * k), exSmile * k, musicK * 0.5));
 
     if (lens.mat) { // el reflejo entra y sale con un fundido
-      lens.k += ((lens.on ? 1 : 0) - lens.k) * (1 - Math.exp(-dt / 0.5));
+      lens.k += ((lens.on || readK > 0.5 ? 1 : 0) - lens.k) * (1 - Math.exp(-dt / 0.5));
       lens.mesh.visible = lens.k > 0.01; lens.mat.opacity = lens.k * (0.62 + Math.sin(clock * 7) * 0.04);
       if (lens.mesh.visible && clock - lens.at > 1 / 15) { drawLens(clock - lens.at); lens.at = clock; }
     }
@@ -175,6 +207,13 @@ export async function createAvatar(canvas) {
       if (lines?.length) lens.lines = lines.map((l) => String(l).replace(/\t/g, '  ').slice(0, 38));
       else if (active && !lens.lines.length) lens.lines = ['$ claude -p "..."', 'const avatar = await taller();', 'for (const paso of plan) {', '  await paso.run();', '}', '// trabajando...'];
     },
+    /** Actividad del modo suspension: 'dormir' | 'leer' | 'musica' | 'juego' | null. */
+    setActivity(name) {
+      if (name !== act) { act = name; actT = 0; }
+      if (name === 'leer' && !lens.lines.length) lens.lines = ['function descansar() {', '  while (!meLlaman) {', '    leer(unPoco);', '  }', '}', '// no molestar', 'const idea = pensar();'];
+    },
+    /** Mirar hacia un punto de la pantalla (-1..1), igual que si fuera el puntero. */
+    look(x, y) { pointer.x = x; pointer.y = y; pointer.at = clock; },
     /** Forma de boca que pide la reaccion (se combina con el lip sync). */
     exprMouth,
     morphNames: [...morphs.keys()],

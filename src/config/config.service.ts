@@ -70,6 +70,8 @@ export class ConfigService {
   readonly musicVolume: number;
   readonly musicDailySearches: number;
   readonly musicMaxMinutes: number;
+  readonly suspendMaxMinutes: number;
+  readonly wakeWords: string[];
   /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
   readonly publicUrl: string;
   readonly callMode: string;
@@ -172,6 +174,9 @@ export class ConfigService {
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));
     this.musicDailySearches = int('MUSIC_DAILY_SEARCHES', 80, 1);
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
+    this.suspendMaxMinutes = int('SUSPEND_MAX_MINUTES', 120, 1);
+    // Palabra para despertar y las formas en que el reconocedor suele escribirla. La primera es la que se muestra.
+    this.wakeWords = (process.env.WAKE_WORDS || 'javi,javier,xavi,havi,habi,jabi,jabe,javy,jaby,yavi,yabi').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     // Una llamada de WhatsApp no tiene navegador: sin voz del servidor no se puede atender.

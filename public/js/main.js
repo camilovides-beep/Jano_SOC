@@ -3,12 +3,12 @@ import { SpeechPlayer, base64ToBytes } from './audio.js';
 import { LipSync, VISEMES } from './lipsync.js';
 import { startMic } from './mic.js';
 import { connect } from './socket.js';
-import { createBackdrop, emojiBurst } from './fx.js';
+import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
 import { createMusic } from './music.js';
 import { BrowserVoice } from './browser-voice.js';
 
 const $ = (id) => document.getElementById(id);
-const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando' };
+const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', away: 'Suspendido' };
 const REQUIRED = [...VISEMES, 'mouthSmile', 'eyeBlink', 'browUp'];
 const STANDBY_TEXT = 'Háblame o toca la pantalla para conversar';
 const ERRORS = {
@@ -42,7 +42,44 @@ function onMusic(msg) {
 // Taller de programacion (modo dueño): mientras Claude Code trabaja, el fondo es un editor, las gafas reflejan el
 // codigo y arriba se ve en que va. Los fondos que pide una respuesta mandan mientras el avatar habla.
 let work = null;
-const restScene = () => (work ? 'codigo' : null);
+const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : null);
+// Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
+// rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.
+const ACTIVITIES = {
+  juego: { scene: 'pong', label: '🏓 Jugando ping-pong' },
+  dormir: { scene: 'noche', label: '😴 Durmiendo', emoji: ['💤'], every: 1.5 },
+  leer: { scene: 'codigo', label: '📖 Leyendo código' },
+  musica: { scene: 'ecualizador', label: '🎧 Oyendo música', emoji: ['🎵', '🎶'], every: 0.9 },
+};
+let suspended = false, dormant = false, wakeWord = 'Javi', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
+function setActivity(name) {
+  if (name === activity) return;
+  activity = name; avatar.setActivity(name);
+  $('away').hidden = !name || !live;
+  if (name) $('away-text').textContent = `${ACTIVITIES[name].label} · di «${wakeWord}» o toca la pantalla`;
+  $('away-notice').textContent = awayNotice;
+  if (state !== 'speaking') backdrop.show(restScene());
+}
+function setSuspended(on, notice) {
+  suspended = !!on; awayNotice = on ? (notice || '') : '';
+  $('away-notice').textContent = awayNotice;
+  if (!on) { setActivity(null); if (state === 'away') setState(live ? 'listening' : 'idle'); }
+  else { hideCard(); $('sub-user').textContent = ''; if (state !== 'speaking' && state !== 'thinking') setState('away'); }
+}
+const restState = () => (suspended || dormant ? 'away' : live ? 'listening' : 'idle');
+/** Va cambiando de actividad cada medio minuto, mas o menos, sin repetir hasta haber pasado por todas. */
+function runActivities(now) {
+  if (state !== 'away') { if (activity) setActivity(null); actUntil = 0; return; }
+  if (now >= actUntil) {
+    if (!actQueue.length) actQueue = Object.keys(ACTIVITIES).sort(() => Math.random() - 0.5).filter((a, i) => i || a !== activity);
+    setActivity(actQueue.shift()); actUntil = now + 26000 + Math.random() * 16000; startleAt = now + 9000 + Math.random() * 9000;
+  }
+  const a = ACTIVITIES[activity];
+  if (a.emoji && now >= floatAt) { floatAt = now + a.every * 1000; floatEmoji($('fx'), a.emoji); }
+  if (activity === 'juego') { const b = backdrop.ball; avatar.look(b.x * 0.9, b.y * 0.7); }
+  if (activity === 'dormir' && now >= startleAt) { startleAt = now + 14000 + Math.random() * 12000; avatar.react('sorpresa'); } // se despierta sobresaltado y vuelve a dormirse
+  if (activity === 'leer' && now >= startleAt) { startleAt = now + 8000 + Math.random() * 8000; avatar.react(Math.random() < 0.5 ? 'pensativo' : 'alegria'); }
+}
 function setWork(msg) {
   work = msg && msg.active ? msg : null;
   avatar.setWork(!!work, work?.code);
@@ -55,6 +92,7 @@ function setWork(msg) {
   if (state !== 'speaking') backdrop.show(restScene());
 }
 const backdrop = createBackdrop($('backdrop'));
+backdrop.onScore = (who) => { if (activity === 'juego') avatar.react(who === 'avatar' ? 'celebracion' : 'pena'); };
 let audioCtx = null, player = null, socket = null, mic = null;
 let state = 'idle', live = false, connecting = false, speechId = -1, subChars = [], subShown = 0, wasPlaying = false, closeReason = '';
 // Modo espera: tras el primer toque el microfono queda abierto en el navegador (sin enviar nada). Cuando alguien habla,
@@ -95,6 +133,7 @@ function onMessage(msg) {
   switch (msg.type) {
     case 'ready':
       live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
+      if (msg.wake) wakeWord = msg.wake[0].toUpperCase() + msg.wake.slice(1);
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
       if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
@@ -103,6 +142,7 @@ function onMessage(msg) {
       closeReason = ERRORS[msg.reason] ?? 'Ocurrió un problema. Háblame para reintentar.';
       if (msg.reason === 'codigo') { $('code').hidden = false; armed = false; }
       if (msg.reason === 'ocupado') retryAt = performance.now() + 15000;
+      if (msg.reason === 'suspension') { closeReason = ''; dormant = true; } // sigue suspendido, ya sin oir: solo despierta con un toque
       break;
     case 'user_partial':
       if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
@@ -136,8 +176,10 @@ function onMessage(msg) {
       onMusic(msg); break;
     case 'work': // progreso del taller de programacion
       setWork(msg); break;
+    case 'suspend': // entra o sale del modo suspension
+      setSuspended(msg.on, msg.notice); break;
     case 'interrupt': // el usuario hablo encima: se corta el audio y la boca vuelve a reposo
-      stopSpeech(); $('sub-avatar').textContent = ''; backdrop.show(restScene()); setState('listening'); break;
+      stopSpeech(); $('sub-avatar').textContent = ''; backdrop.show(restScene()); setState(restState()); break;
   }
 }
 
@@ -145,13 +187,14 @@ function onMessage(msg) {
 function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
-  setWork(null); music.stop(); stopSpeech(); backdrop.show(null); hideCard(); setState('idle');
+  suspended = false; awayNotice = ''; $('away').hidden = true;
+  setWork(null); music.stop(); stopSpeech(); hideCard(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
   $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
-  $('gate-text').textContent = armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
+  $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');
-  if (armed && message) setTimeout(() => { if (!live && !connecting) $('gate-text').textContent = STANDBY_TEXT; }, 6000);
+  if (armed && message && !dormant) setTimeout(() => { if (!live && !connecting && !dormant) $('gate-text').textContent = STANDBY_TEXT; }, 6000);
 }
 
 function startSession() {
@@ -163,7 +206,7 @@ function startSession() {
 
 function onMicChunk(buffer) {
   if (live) { socket.sendAudio(buffer); return; }
-  if (!armed) return;
+  if (!armed || dormant) return; // suspendido sin sesion: no se oye nada; solo despierta con un toque
   prebuffer.push(buffer); if (prebuffer.length > 50) prebuffer.shift(); // ~2 s
   if (connecting || performance.now() < retryAt) { loud = 0; return; }
   // Deteccion simple de voz por volumen: ~0,25 s seguidos por encima del umbral.
@@ -182,7 +225,7 @@ async function begin() {
     await audioCtx.resume();
     serverPlayer ??= new SpeechPlayer(audioCtx); player ??= serverPlayer;
     if (!mic) mic = await startMic(audioCtx, onMicChunk);
-    armed = true; retryAt = 0;
+    armed = true; retryAt = 0; dormant = false;
     startSession();
   } catch (e) {
     armed = false;
@@ -198,7 +241,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const playing = !!player && player.active;
   if (wasPlaying !== playing) { wasPlaying = playing; socket?.send({ type: 'playback', playing }); } // el servidor sabe cuando termina de sonar
-  if (state === 'speaking' && !playing) { lips.reset(); setState(live ? 'listening' : 'idle'); setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
+  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') $('sub-avatar').textContent = ''; setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
   const t = playing ? player.time() : -1;
   const w = lips.update(state === 'speaking' ? t : -1, dt);
   for (const v of VISEMES) avatar.setMorph(v, Math.max(w[v], avatar.exprMouth[v] || 0));
@@ -208,12 +251,15 @@ function frame(now) {
     if (n !== subShown) { subShown = n; $('sub-avatar').textContent = subChars.slice(0, n).map((x) => x.c).join(''); }
   }
   if (music.active) music.duck(playing || state === 'speaking' || state === 'thinking' || now < duckUntil);
+  runActivities(now);
   avatar.update(dt);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+// Suspendido con la sesion abierta: un toque en cualquier parte lo despierta.
+window.addEventListener('pointerdown', () => { if (live && suspended) socket?.send({ type: 'wake' }); });
 window.__avatarDebug = {
   react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, work: setWork, music: onMusic, message: onMessage,
-  standby: () => { armed = true; shutdown(''); },
+  standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

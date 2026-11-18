@@ -78,3 +78,10 @@ button.ghost { background: rgba(255, 255, 255, .12); }
   .card-panel h2, .card-panel ul { grid-column: 1; } .card-panel img { grid-column: 2; grid-row: 1 / span 3; max-width: 130px; } .card-panel p { grid-column: 1 / -1; }
   @keyframes card-in { from { opacity: 0; transform: translateX(50%) translateY(24px); } }
 }
+/* Modo suspension: el avatar no responde y se entretiene; abajo dice como despertarlo. */
+.away { position: fixed; left: 50%; bottom: max(9vh, 40px); transform: translateX(-50%); max-width: min(560px, 92vw); padding: 12px 22px; border-radius: 16px; text-align: center;
+  background: rgba(10, 13, 17, .66); backdrop-filter: blur(8px); font-size: clamp(16px, 2.4vw, 20px); display: grid; gap: 4px; pointer-events: none; z-index: 5; }
+.away[hidden] { display: none; }
+.away-notice { color: var(--warn); font-size: .85em; }
+.away-notice:empty { display: none; }
+.status[data-state="away"] .dot { background: #8f7bff; animation: pulse 2.4s infinite; }
