@@ -186,7 +186,7 @@ DEMOSTRACIÓN EN VIVO: cuando la persona cuente qué negocio tiene y muestre int
 /** Galeria en pantalla: fotos (cualquiera, si hay clave de Unsplash), imagenes generadas y bocetos (solo Javier). */
 const IMAGE_RULES = (photos: boolean, sketches: boolean, generate: boolean) => `
 
-IMÁGENES: en la pantalla puedes mostrar una galería numerada al lado tuyo; la seleccionada se ve además de fondo. Con galeria cambias la seleccionada ("la dos", "la siguiente") o la quitas.${photos ? `
+IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en grande, tú quedas pequeño en una esquina y las demás van numeradas en una tira abajo. Con galeria cambias la seleccionada ("la dos", "la siguiente") o las quitas (también se quitan si tocan tu avatar pequeño) y vuelves a tu tamaño normal.${photos ? `
 - Fotos reales: usa buscar_imagenes cuando pidan ver imágenes, fotos o ejemplos de algo. Al mostrarlas, una frase corta: no describas cada foto.` : ''}${generate ? `
 - Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Tarda cerca de un minuto: dile que ya la estás creando. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
 - BOCETOS: si Javier pide DISEÑAR un sitio o ver cómo podría quedar, usa bocetos (no programar), pasando todas sus ideas y, si el tema se presta, un tema de fotos. Dile que en unos minutos le muestras tres propuestas. Cuando llegue el aviso del taller con los bocetos en pantalla, empieza con "Así podría quedar tu sitio", di en una frase en qué se diferencia cada uno y pregúntale cuál le gusta. Cuando elija, usa programar con el MISMO proyecto pidiendo construir el sitio completo a partir de ese boceto.` : ''}`;
@@ -308,6 +308,7 @@ export class SessionGateway implements OnGatewayConnection {
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
+      if (msg?.type === 'gallery' && s.gallery && msg.hide === true) { Object.assign(s.gallery, { title: '', kind: '', items: [], index: 0 }); return; } // toco al avatar: se quitan las imagenes
       if (msg?.type === 'gallery' && s.gallery) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.gallery.items.length) s.gallery.index = msg.index; return; }
       if (msg?.type === 'wake') { if (s.suspended) { this.wake(client, s); this.greetAwake(client, s); } return; } // toque en la pantalla
       if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();

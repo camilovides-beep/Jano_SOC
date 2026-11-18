@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ConfigService } from '../config/config.service';
+import { DbService } from '../db/db.service';
 import { UsageService } from '../usage/usage.service';
 
 /** Un elemento de la galeria en pantalla: una foto (thumb/full) o un boceto en vivo (frame = direccion de la pagina). */
@@ -33,12 +34,12 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * SIN PROBAR con claves reales al escribir esto (Javier aun no las habia puesto): solo con respuestas simuladas.
  */
 @Injectable()
-export class ImagesService {
+export class ImagesService implements OnModuleInit {
   private readonly log = new Logger(ImagesService.name);
   private readonly cache = new Map<string, { at: number; items: GalleryItem[] }>();
   private day = ''; private used = 0; private generated = 0;
   private readonly dir: string;
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) { this.dir = resolve(cfg.dataDir, 'imagenes'); } // absoluta: res.sendFile no acepta rutas relativas
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService) { this.dir = resolve(cfg.dataDir, 'imagenes'); } // absoluta: res.sendFile no acepta rutas relativas
 
   /** Hay busqueda de fotos. */
   get enabled() { return !!this.cfg.unsplashAccessKey; }
@@ -113,7 +114,8 @@ export class ImagesService {
     mkdirSync(this.dir, { recursive: true });
     const name = `${randomBytes(12).toString('hex')}.${type === 'image/png' ? 'png' : type === 'image/webp' ? 'webp' : 'jpg'}`;
     writeFileSync(join(this.dir, name), buf);
-    this.prune();
+    await this.db.query('INSERT INTO generated_images (at, name, prompt, format, bytes) VALUES ($1, $2, $3, $4, $5)', [new Date().toISOString(), name, prompt.slice(0, 1500), FORMATS[format] ? format : 'horizontal', buf.length])
+      .catch((e) => this.log.warn(`la imagen se guardó pero no quedó anotada: ${(e as Error).message}`));
     this.log.log(`imagen generada (${Math.round(buf.length / 1024)} KB)`);
     return name;
   }
@@ -125,11 +127,29 @@ export class ImagesService {
     try { return statSync(full).isFile() ? full : null; } catch { return null; }
   }
 
-  /** Se conservan las 200 imagenes mas recientes. */
-  private prune() {
+  /**
+   * Las imagenes generadas se conservan todas (pedido por Javier el 2026-11-18: antes solo quedaban las ultimas 200) y se
+   * anotan en la tabla `generated_images` con su descripcion, para verlas, descargarlas o borrarlas en el panel.
+   * Al arrancar se anotan las que ya estaban en la carpeta de antes (sin descripcion).
+   */
+  async onModuleInit() {
     try {
-      const files = readdirSync(this.dir).map((n) => ({ n, t: statSync(join(this.dir, n)).mtimeMs })).sort((a, b) => b.t - a.t);
-      for (const f of files.slice(200)) unlinkSync(join(this.dir, f.n));
-    } catch { /* carpeta sin permisos o vacia */ }
+      const known = new Set((await this.db.query<{ name: string }>('SELECT name FROM generated_images')).map((r) => r.name));
+      for (const n of readdirSync(this.dir)) {
+        if (known.has(n) || !this.file(n)) continue;
+        const st = statSync(join(this.dir, n));
+        await this.db.query('INSERT INTO generated_images (at, name, prompt, format, bytes) VALUES ($1, $2, $3, $4, $5)', [st.mtime.toISOString(), n, '', '', st.size]);
+      }
+    } catch { /* aun no hay carpeta de imagenes */ }
+  }
+  listGenerated(limit = 300): Promise<GeneratedImage[]> { return this.db.query<GeneratedImage>('SELECT * FROM generated_images ORDER BY at DESC LIMIT $1', [Math.min(1000, Math.max(1, limit))]); }
+  async removeGenerated(id: number): Promise<boolean> {
+    const row = (await this.db.query<GeneratedImage>('DELETE FROM generated_images WHERE id = $1 RETURNING name', [id]))[0];
+    if (!row) return false;
+    const f = this.file(row.name); if (f) try { unlinkSync(f); } catch { /* ya no estaba */ }
+    return true;
   }
 }
+
+/** Una imagen generada con IA y guardada en DATA_DIR/imagenes. */
+export interface GeneratedImage { id: number; at: string; name: string; prompt: string; format: string; bytes: number }

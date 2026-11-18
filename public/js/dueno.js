@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -277,6 +277,21 @@ async function loadUsage() {
 }
 
 // ---------- taller ----------
+async function loadImages() {
+  const { enabled, images } = await json('images');
+  $('image-count').textContent = `(${images.length})`;
+  $('image-note').textContent = images.length ? 'Todas las que le pides al avatar quedan aquí guardadas, con la descripción que diste. Toca una para verla completa.'
+    : enabled ? 'Todavía no hay ninguna. Pídele al avatar, en modo dueño, que genere una imagen y quedará aquí.' : 'La generación de imágenes no está configurada en el servidor (falta su clave).';
+  $('image-grid').replaceChildren(...images.map((i) => {
+    const pic = el('a', { className: 'pic', href: i.url, target: '_blank', rel: 'noopener' }, el('img', { src: i.url, alt: i.prompt || 'Imagen generada', loading: 'lazy' }));
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
+    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`images/${i.id}`, { method: 'DELETE' }); loadImages(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
+    return el('figure', {}, pic, el('figcaption', { textContent: i.prompt || 'Sin descripción guardada (generada antes de este cambio)' }),
+      el('small', { textContent: `${fecha(i.at)}${i.format ? ` · ${i.format}` : ''} · ${Math.round(i.bytes / 1024)} KB` }),
+      el('div', { className: 'row' }, el('a', { href: i.url, download: `imagen-${i.id}.${i.name.split('.').pop()}`, textContent: 'Descargar' }), del));
+  }));
+}
+
 let projectTimer = null;
 async function loadProjects() {
   const { enabled, busy, progress, projects } = await json('projects');

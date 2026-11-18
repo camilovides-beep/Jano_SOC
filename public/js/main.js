@@ -152,6 +152,7 @@ function showGallery(msg) {
   if (msg.action === 'select' && gallery && gallery.items.length === msg.items.length) { selectGallery(msg.index, false); return; }
   gallery = { kind: msg.kind, items: msg.items, index: msg.index || 0 };
   hideCard(); $('gallery-title').textContent = msg.title || '';
+  document.body.classList.add('showing'); // el avatar se achica a la esquina y la imagen se ve en grande
   $('gallery-items').replaceChildren(...msg.items.map((item, i) => {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'gallery-item'; b.setAttribute('aria-label', `${i + 1}: ${item.label || ''}`);
     if (item.frame) b.append(frameOf(item.frame)); else { const img = new Image(); img.src = item.thumb; img.alt = item.label || ''; img.loading = 'lazy'; b.append(img); }
@@ -164,7 +165,7 @@ function showGallery(msg) {
   requestAnimationFrame(() => { for (const el of $('gallery-items').children) { const f = el.querySelector('iframe'); if (f) f.style.transform = `scale(${el.clientWidth / 1280})`; } });
   selectGallery(gallery.index, false);
 }
-function hideGallery() { gallery = null; $('gallery').hidden = true; $('gallery-items').replaceChildren(); $('photo-bg').classList.remove('on'); setTimeout(() => { if (!gallery) $('photo-bg').replaceChildren(); }, 900); }
+function hideGallery() { gallery = null; document.body.classList.remove('showing'); $('gallery').hidden = true; $('gallery-items').replaceChildren(); $('photo-bg').classList.remove('on'); setTimeout(() => { if (!gallery) $('photo-bg').replaceChildren(); }, 900); }
 
 function setState(s) {
   if (s === state) return;
@@ -313,6 +314,8 @@ function frame(now) {
 requestAnimationFrame(frame);
 // Suspendido con la sesion abierta: un toque en cualquier parte lo despierta.
 window.addEventListener('pointerdown', () => { if (live && suspended) socket?.send({ type: 'wake' }); });
+// Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
+$('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
   react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },

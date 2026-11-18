@@ -61,7 +61,12 @@
     .hbar b small { font-weight: 400; margin-left: 6px; }
     .case-photo { max-width: 260px; width: 100%; border-radius: 10px; display: block; }
     [hidden] { display: none !important; }
-  </style>
+      .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+    .image-grid figure { margin: 0; display: grid; gap: 8px; align-content: start; padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, .04); }
+    .image-grid a.pic { display: block; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: #0c0f13; }
+    .image-grid img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .image-grid figcaption { font-size: 14px; overflow-wrap: anywhere; }
+</style>
 </head>
 <body>
   <main>
@@ -88,6 +93,7 @@
           <button role="tab" data-tab="visitas">Visitas</button>
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
           <button role="tab" data-tab="portafolio">Portafolio</button>
+          <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="consumo">Consumo</button>
           <button role="tab" data-tab="taller">Taller</button>
           <button role="tab" data-tab="dispositivos">Dispositivos</button>
@@ -150,6 +156,12 @@
             </form>
           </div>
           <div class="card"><h2>Casos <small id="case-count"></small></h2><ul class="list" id="case-list"></ul></div>
+        </section>
+
+        <section data-view="imagenes" class="card" hidden>
+          <h2>Imágenes generadas con IA <small id="image-count"></small></h2>
+          <p class="muted" id="image-note">Todas las que le pides al avatar quedan aquí guardadas, con la descripción que diste.</p>
+          <div class="image-grid" id="image-grid"></div>
         </section>
 
         <section data-view="conversaciones" class="card" hidden>

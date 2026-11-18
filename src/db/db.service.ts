@@ -42,6 +42,8 @@ const SCHEMA = [
      demo_offered INTEGER NOT NULL DEFAULT 0, demo_done INTEGER NOT NULL DEFAULT 0, lead INTEGER NOT NULL DEFAULT 0, cases INTEGER NOT NULL DEFAULT 0,
      interest TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '', objections TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS visits_at ON visits (at)`,
+  // Imagenes generadas con IA: el archivo vive en DATA_DIR/imagenes; aqui queda con que descripcion se pidio.
+  `CREATE TABLE IF NOT EXISTS generated_images (id {{ID}}, at {{TS}} NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0)`,
   // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.
   // open_at y last_at son texto ISO ('' = sin conversacion abierta): se comparan como texto en las dos bases.
   `CREATE TABLE IF NOT EXISTS wa_messages (id {{ID}}, phone TEXT NOT NULL, at {{TS}} NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL)`,

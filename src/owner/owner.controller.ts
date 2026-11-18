@@ -167,6 +167,15 @@ export class OwnerController {
   @Delete('leads/:id')
   async removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.leads.remove(Number(id)) }; }
 
+  // ---- imagenes generadas con IA ----
+  @Get('images')
+  async generatedImages(@Req() req: Request) {
+    this.require(req);
+    return { enabled: this.images.canGenerate, images: (await this.images.listGenerated()).map((i) => ({ ...i, url: `/imagenes/${i.name}` })) };
+  }
+  @Delete('images/:id')
+  async removeImage(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.images.removeGenerated(Number(id)) }; }
+
   // ---- taller de programacion (solo desde un dispositivo registrado) ----
   @Get('projects')
   async projects(@Req() req: Request) {
