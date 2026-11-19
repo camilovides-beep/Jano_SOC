@@ -1,0 +1,14 @@
+services:
+  jano:
+    build: .
+    image: jano-soc
+    container_name: jano-soc
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+      # Llamadas de WhatsApp (WebRTC): descomentar y definir CALL_PUBLIC_IP en .env.
+      # - "40000-40009:40000-40009/udp"
+    volumes:
+      # Base SQLite, fotos y respaldos. El contenedor corre como node (UID 1000).
+      - ./data:/app/data
