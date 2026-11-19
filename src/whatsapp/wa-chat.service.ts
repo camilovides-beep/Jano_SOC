@@ -14,6 +14,7 @@ import { UsageService } from '../usage/usage.service';
 import { VisitsService } from '../visits/visits.service';
 import { WhatsAppService } from './whatsapp.service';
 import { OptOutService } from '../security/optout.service';
+import { CatalogService } from '../policy/catalog.service';
 import { BLOCKED_NOTE, InjectionGuard } from '../security/injection.guard';
 
 /** Un mensaje entrante ya clasificado. */
@@ -21,7 +22,7 @@ interface Incoming { id: string; kind: 'texto' | 'image' | 'audio'; text: string
 interface Chat { phone: string; name: string; last_at: string; open_at: string; turns: number; leads: string; cases: number }
 
 /** Herramientas del avatar que tienen sentido en un chat (las de pantalla y la demostracion quedan fuera). */
-const CHAT_TOOLS = new Set(['hora_actual', 'clima', 'precio_dolar', 'registrar_interesado', 'portafolio']);
+const CHAT_TOOLS = new Set(['hora_actual', 'clima', 'precio_dolar', 'registrar_interesado', 'portafolio', 'pedir_cotizacion']);
 const HISTORY = 20;            // mensajes anteriores del mismo numero que ve el modelo
 const DEBOUNCE_MS = 2500;      // la gente escribe en varios mensajes seguidos: se espera un momento y se responden juntos
 const MAX_AGE_S = 30 * 60;     // Meta reintenta avisos viejos (por ejemplo tras un despliegue): los de mas de 30 min no se contestan
@@ -70,7 +71,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly wa: WhatsAppService, private readonly knowledge: KnowledgeService, private readonly portfolio: PortfolioService,
     private readonly visits: VisitsService, private readonly leads: LeadsService, private readonly usage: UsageService, private readonly alerts: AlertsService,
-    private readonly optout: OptOutService, private readonly guard: InjectionGuard) {}
+    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly catalog: CatalogService) {}
 
   get enabled() { return this.cfg.whatsappReplies === 'avatar' && this.wa.canSend; }
   onModuleInit() {
@@ -151,13 +152,13 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     const screen = this.guard.screen(userText, 'un chat de WhatsApp'); // señal de inyeccion, en paralelo con la respuesta
     const context = await this.context(userText);
     const messages: any[] = [
-      { role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + RULES(phone, name || chat.name, this.wa.canVoice) },
+      { role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + this.catalog.prompt() + RULES(phone, name || chat.name, this.wa.canVoice) },
       ...past.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
       { role: 'user', content: userText + (asVoice ? '\n\n(Mensaje recibido como nota de voz: responde para ser escuchado.)' : '') + context },
     ];
     const defs = (await this.tools.definitions(false)).filter((d: any) => CHAT_TOOLS.has(d.function?.name));
     const gallery: GalleryState = { title: '', kind: '', items: [], index: 0 } as GalleryState;
-    let answer = '';
+    let answer = ''; const used: string[] = [];
     for (let round = 0; round < 4; round++) {
       let text = '', calls: { id: string; name: string; arguments: string }[] = [];
       for await (const ev of this.llm.chat(messages, defs, AbortSignal.timeout(45_000), 700)) { if (ev.type === 'tool_calls') calls = ev.calls; else text += ev.delta; }
@@ -172,7 +173,8 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
         else {
           // El contacto lo pone el servidor: es el numero desde el que escribe, no lo que diga el modelo.
           if (c.name === 'registrar_interesado') try { args = JSON.stringify({ ...JSON.parse(args || '{}'), contacto: `+${phone}` }); } catch { /* run() avisara de los argumentos */ }
-          const out = await this.tools.run(c.name, args, false, { origin: this.cfg.publicUrl, gallery, source: 'whatsapp' });
+          used.push(c.name);
+          const out = await this.tools.run(c.name, args, false, { leadIds, origin: this.cfg.publicUrl, gallery, source: 'whatsapp' });
           result = out.text;
           if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) { const id = Number(result.match(/número (\d+)/)?.[1]); if (id) leadIds.push(id); }
           if (c.name === 'portafolio' && result.includes('del portafolio (datos reales')) chat.cases = 1;
@@ -183,6 +185,10 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     }
     // WhatsApp usa *negrita* con un asterisco; el modelo a veces escribe markdown o las etiquetas del avatar de voz.
     answer = answer.replace(/\[(r|f|c):[^\]]*\]/gi, '').replace(/\*\*(.+?)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').trim() || 'Perdón, se me cruzaron los cables 😅. ¿Me lo repites?';
+
+    // Precios: en el chat la respuesta aun no ha salido, asi que aqui SI se frena. Si trae un precio que no esta en el
+    // catalogo (o cualquiera, si no hay catalogo), no se envia: va la frase de la cotizacion y Javier recibe el aviso.
+    if (!used.includes('precio_dolar') && this.catalog.spoken(answer, 'un chat de WhatsApp')) answer = 'Sobre precios, Javier te prepara la cotización según lo que necesitas 🙌. Cuéntame un poco más de tu negocio y se lo paso para que te escriba con el valor.';
 
     let sentVoice = false;
     if (asVoice) try { await this.wa.sendVoice(phone, answer.slice(0, 2500)); sentVoice = true; } catch (e) { this.log.warn(`chat de WhatsApp: no salió la nota de voz, va en texto (${(e as Error).message})`); }

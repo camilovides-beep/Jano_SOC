@@ -50,6 +50,8 @@ async function main() {
   const { ActionsService } = await import('../policy/actions.service');
   const { LeadsService } = await import('../leads/leads.service');
   const { ApprovalsService } = await import('../policy/approvals.service');
+  const { CatalogService, findPrices } = await import('../policy/catalog.service');
+  const { ToolsService } = await import('../tools/tools.service');
   const { TelegramService } = await import('../ops/telegram.service');
 
   const usage = { add() {} } as any, alerts = { report() {}, set() {}, send: async () => '' } as any;
@@ -61,9 +63,10 @@ async function main() {
     await settings.onModuleInit();
     const optout = new OptOutService(cfg, db, decisions, alerts), capable = new CapableModelService(cfg, usage), guard = new InjectionGuard(decisions, alerts, settings, cfg, capable);
     await optout.onModuleInit();
-    const policy = new PolicyService(cfg, settings), actions = new ActionsService(cfg, db, policy, optout, alerts), wa = new WhatsAppService(cfg, llm, usage, optout);
+    const catalog = new CatalogService(cfg, db, alerts); await catalog.onModuleInit();
+    const policy = new PolicyService(cfg, settings), actions = new ActionsService(cfg, db, policy, optout, alerts, catalog), wa = new WhatsAppService(cfg, llm, usage, optout);
     const telegram = new TelegramService(cfg), approvals = new ApprovalsService(cfg, db, actions, policy, telegram);
-    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa, policy, actions, telegram, approvals, leads: new LeadsService(cfg, wa, db, approvals, policy) };
+    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa, policy, actions, telegram, approvals, catalog, leads: new LeadsService(cfg, wa, db, approvals, policy) };
   };
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** Proveedor simulado: responde lo que se le diga, tarda lo que se le diga o falla. */
@@ -202,7 +205,7 @@ async function main() {
     const llm = { chat: async function* () { if (round++ === 0) yield { type: 'tool_calls', calls: [{ id: 't1', name: 'registrar_interesado', arguments: '{"nombre":"X","contacto":"1","interes":"otro","autoriza":true}' }, { id: 't2', name: 'clima', arguments: '{}' }] }; else yield { type: 'text', delta: 'Listo.' }; } } as any;
     const tools = { definitions: async () => [], run: async (name: string) => { ran.push(name); return { text: 'hecho' }; } } as any;
     const wa = { canSend: true, canVoice: false, markRead: async () => undefined, sendText: async (_to: string, t: string) => { out.push(t); return 'id'; } } as any;
-    return new WaChatService(b.cfg, b.db, llm, tools, wa, { enabled: false } as any, { prompt: () => '', file: () => null } as any, { add: async () => undefined } as any, { logConversation: async () => undefined } as any, usage, alerts, b.optout, b.guard);
+    return new WaChatService(b.cfg, b.db, llm, tools, wa, { enabled: false } as any, { prompt: () => '', file: () => null } as any, { add: async () => undefined } as any, { logConversation: async () => undefined } as any, usage, alerts, b.optout, b.guard, b.catalog);
   };
 
   await check('Una inyección en un mensaje no dispara acciones (y un mensaje normal sí)', async () => {
@@ -230,7 +233,7 @@ async function main() {
       const tools = { definitions: async () => [], run: async (name: string) => { ran.push(name); return { text: 'hecho' }; } } as any;
       const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
         { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
-        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable);
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable, b.catalog);
       const client = { readyState: 1, OPEN: 1, send: (raw: string) => { const m = JSON.parse(raw); if (m.type === 'say') said += m.text; }, on: noop, close: noop };
       const sess: any = { n: 1, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
       gw.start(client, sess, null); await wait(150);
@@ -259,7 +262,7 @@ async function main() {
       const tools = { definitions: async () => ALL, run: async () => ({ text: 'hecho' }) } as any;
       const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
         { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
-        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable);
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable, b.catalog);
       const client = { readyState: 1, OPEN: 1, send: noop, on: noop, close: noop };
       const sess: any = { n: 1, ready: false, owner: !!o.owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
       gw.start(client, sess, null); await wait(120);
@@ -603,8 +606,59 @@ async function main() {
   });
   A.now = () => new Date();
 
-  for (const [name, stage] of [['Ningún mensaje autónomo sale con precios sin catálogo', '2c']] as const)
-    await check(name, async () => skip(`todavía no existe lo que comprueba (etapa ${stage})`));
+  // ---------- Etapa 2c: catalogo, revision de salida, precios en las conversaciones y "que hiciste" ----------
+  const AI = 'Hola, soy el asistente con IA de Javier. ';
+  await check('Detección de precios: reconoce dinero y no confunde otras cifras', async () => {
+    for (const t of ['Te sale en $ 1.200.000', 'serían 800 mil pesos', 'unos dos millones de pesos', 'USD 300 al mes', 'cuesta 450 dólares', 'desde 1.5 millones de pesos'])
+      must(findPrices(t).length > 0, `no vio el precio en «${t}»`);
+    for (const t of ['Atiendo 2 mil clientes al mes', 'Llámame al 300 123 4567', 'Son 3 pasos y tarda 2 semanas', 'El 80 % de los pedidos llega por WhatsApp', 'Te escribo el lunes a las 10'])
+      must(findPrices(t).length === 0, `tomó por precio algo que no lo es: «${t}» → ${findPrices(t).join(' | ')}`);
+  });
+
+  await check('Ningún mensaje autónomo sale con precios mientras no haya catálogo', async () => {
+    at('2026-12-01T15:00:00.000Z'); await setP('simulacion', false); await setP('produccion', true); sends = 0;
+    must(P.catalog.empty, 'el catálogo debía arrancar vacío');
+    const r = await A.run(req('3007770001', { content: AI + 'El bot te queda en $ 1.200.000.' }), send);
+    must(r.status === 'bloqueada' && /precio/.test(r.reason) && sends === 0, `mensaje con precio y sin catálogo: ${r.status} ${r.reason}`);
+    must((await A.run(req('3007770001', { content: AI + 'Serían unos dos millones de pesos.' }), send)).status === 'bloqueada' && sends === 0, 'un precio escrito en palabras salió');
+    must((await A.run(req('3007770001', { kind: 'oferta', approved: true, content: AI + 'Oferta: 900.000 COP.' }), send)).status === 'bloqueada' && sends === 0, 'sin catálogo salió una oferta, incluso aprobada');
+    must((await A.run(req('3007770002', { content: 'Hola, ¿pudiste ver lo del bot?' }), send)).status === 'bloqueada' && sends === 0, 'salió un mensaje que no dice que es el asistente con IA de Javier');
+    must((await A.run(req('3007770002', { content: AI + '¿Pudiste ver lo del bot?' }), send)).status === 'enviada' && sends === 1, 'un mensaje correcto y sin precios debía salir');
+    const item = await P.catalog.save({ name: 'Bot de WhatsApp básico', price: 1200000, currency: 'COP', unit: 'pago único' });
+    must((await A.run(req('3007770003', { content: AI + 'El bot básico vale $ 1.200.000.' }), send)).status === 'enviada', 'con el precio en el catálogo debía poder salir, sin cambiar código');
+    must((await A.run(req('3007770004', { content: AI + 'Te lo dejo en $ 900.000.' }), send)).status === 'bloqueada', 'salió un precio que no está en el catálogo');
+    must(await P.catalog.save({ name: 'x', price: 5 }).then(() => false, () => true) && await P.catalog.save({ name: 'Algo válido', price: -1 }).then(() => false, () => true), 'el catálogo aceptó un nombre o un precio inválido');
+    await P.catalog.remove(item.id); must(P.catalog.empty, 'no se pudo vaciar el catálogo');
+    return 'sin catálogo: bloqueado; con el precio cargado: sale; otro precio: bloqueado; sin identificarse como IA: bloqueado';
+  });
+
+  await check('En el chat de WhatsApp un precio fuera del catálogo no llega a la persona', async () => {
+    P.decisions.useProviders(fake('deepseek', { answers: { ordenes: { value: false, confidence: null }, pidio: { value: false, confidence: null } } }));
+    const reply = async (text: string) => { const out: string[] = []; const llm = { chat: async function* () { yield { type: 'text', delta: text }; } } as any;
+      const wa = { canSend: true, canVoice: false, markRead: async () => undefined, sendText: async (_t: string, m: string) => { out.push(m); return 'id'; } } as any;
+      const c = new WaChatService(P.cfg, P.db, llm, { definitions: async () => [], run: async () => ({ text: '' }) } as any, wa, { enabled: false } as any, { prompt: () => '', file: () => null } as any, { add: async () => undefined } as any, { logConversation: async () => undefined } as any, usage, alerts, P.optout, P.guard, P.catalog);
+      await (c as any).reply('573008880001', 'P', [{ id: 'x' + Math.random(), kind: 'texto', text: '¿Cuánto vale un bot?', mediaId: '' }]); return out.join(' '); };
+    const bad = await reply('Un bot así te sale en unos $ 2.000.000, más o menos.');
+    must(!/2\.000\.000/.test(bad) && /cotización/.test(bad), `el precio llegó a la persona: «${bad}»`);
+    must(/Bogotá/.test(await reply('Javier está en Sucre y también trabaja con clientes de Bogotá.')), 'una respuesta sin precios fue reemplazada');
+    must(/pedir_cotizacion/.test(P.catalog.prompt()) && /NO digas ningún precio/.test(P.catalog.prompt()), 'el prompt no trae la regla de precios');
+  });
+
+  await check('Pedir precio: queda en el interesado y avisa; "¿qué hiciste hoy?" lee la bitácora', async () => {
+    tg.length = 0;
+    const tools = new ToolsService(P.cfg, { definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals);
+    must(/registrar_interesado/.test((await tools.run('pedir_cotizacion', '{"que_necesita":"un bot de pedidos"}', false, { origin: '' })).text), 'sin interesado registrado debía pedir registrarlo primero');
+    const lead = await P.leads.add({ name: 'Marta Prueba', contact: '3008880002', interest: 'bots_de_whatsapp', source: 'voz' });
+    const r = await tools.run('pedir_cotizacion', '{"que_necesita":"un bot de pedidos para su panadería"}', false, { origin: '', leadIds: [lead.id] }); await wait(150);
+    const after = (await P.leads.get(lead.id))!;
+    must(/Anotado/.test(r.text) && !!after.quote_at && /panadería/.test(after.notes), 'no quedó anotado en el interesado que pidió precio');
+    must(tg.some((t) => t.method === 'sendMessage' && /pidió precio/.test(t.body.text)), 'no avisó a Javier de la cotización pedida');
+    must(/no existe/.test((await tools.run('que_hiciste', '{}', false)).text), 'un visitante pudo consultar la bitácora');
+    at(new Date().toISOString()); await A.run(req('3007770009', { content: AI + 'Te escribo para saber si viste lo del bot.' }), send);
+    const q = await tools.run('que_hiciste', '{"dias":1}', true);
+    must(q.untrusted === true && /DATOS/.test(q.text) && /(enviadas|bloqueadas)/.test(q.text) && /Mensaje de seguimiento/.test(q.text), `"qué hiciste" no resume la bitácora: ${q.text.slice(0, 200)}`);
+  });
+  A.now = () => new Date();
 
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };

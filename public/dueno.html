@@ -97,6 +97,7 @@
           <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="aprobaciones" id="tab-aprobaciones">Aprobaciones</button>
+          <button role="tab" data-tab="catalogo">Catálogo</button>
           <button role="tab" data-tab="autonomia">Autonomía</button>
           <button role="tab" data-tab="bitacora">Bitácora</button>
           <button role="tab" data-tab="decisiones">Decisiones</button>
@@ -181,6 +182,23 @@
           </div>
           <div class="card" id="apr-waiting-card" hidden><h2>Aprobadas, esperando su momento <small id="apr-waiting-count"></small></h2><p class="muted" style="margin:0">Salen solas cuando abra el horario o haya cupo. Puedes cancelarlas.</p><ul class="list" id="apr-waiting"></ul></div>
           <div class="card"><h2>Ya decididas</h2><ul class="list" id="apr-recent"></ul></div>
+        </section>
+
+        <section data-view="catalogo" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2>Catálogo de precios <small id="cat-count"></small></h2>
+            <p id="cat-note" class="muted" style="margin:0"></p>
+            <form id="cat-form" class="row" style="flex-wrap:wrap;align-items:flex-start">
+              <input id="cat-name" placeholder="Qué se vende (ej. Bot de WhatsApp básico)" style="flex:2;min-width:220px" required maxlength="100">
+              <input id="cat-price" type="number" min="1" step="any" placeholder="Precio" style="width:140px" required>
+              <select id="cat-currency"><option>COP</option><option>USD</option></select>
+              <input id="cat-unit" placeholder="Unidad (ej. pago único, al mes)" style="flex:1;min-width:150px" maxlength="60">
+              <input id="cat-description" placeholder="Qué incluye (opcional)" style="flex:2;min-width:220px" maxlength="300">
+              <button type="submit" class="small">Agregar</button>
+            </form>
+            <p id="cat-msg" class="muted" style="margin:0"></p>
+            <ul class="list" id="cat-list"></ul>
+          </div>
         </section>
 
         <section data-view="autonomia" style="display:grid;gap:16px" hidden>

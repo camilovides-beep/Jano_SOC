@@ -17,6 +17,7 @@ import { CapableModelService } from '../llm/capable.service';
 import { ACTION_KINDS, ActionsService } from '../policy/actions.service';
 import { ApprovalsService } from '../policy/approvals.service';
 import { PolicyService } from '../policy/policy.service';
+import { CatalogService } from '../policy/catalog.service';
 import { TelegramService } from '../ops/telegram.service';
 import { MusicService } from '../music/music.service';
 import { AlertsService } from '../ops/alerts.service';
@@ -31,7 +32,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -201,6 +202,16 @@ export class OwnerController {
     this.require(req);
     return { actions: await this.actions.list({ status: String(status ?? ''), kind: String(kind ?? ''), q: String(q ?? '').slice(0, 80), days: Math.min(365, Math.max(1, Number(days) || 30)) }), chain: await this.actions.verify(), kinds: ACTION_KINDS };
   }
+
+  // ---- catalogo de precios: vacio = el avatar no dice precios ni envia ofertas ----
+  @Get('catalog')
+  catalogView(@Req() req: Request) { this.require(req); return { items: this.catalog.list(), empty: this.catalog.empty }; }
+  @Post('catalog')
+  async addPrice(@Req() req: Request, @Body() body: Record<string, unknown>) { this.require(req); try { return { ok: true, item: await this.catalog.save(body as any) }; } catch (e) { throw new HttpException({ error: (e as Error).message }, 400); } }
+  @Patch('catalog/:id')
+  async editPrice(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) { this.require(req); try { return { ok: true, item: await this.catalog.save(body as any, Number(id)) }; } catch (e) { throw new HttpException({ error: (e as Error).message }, 400); } }
+  @Delete('catalog/:id')
+  async removePrice(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.catalog.remove(Number(id)) }; }
 
   // ---- bandeja de aprobaciones ----
   @Get('approvals')

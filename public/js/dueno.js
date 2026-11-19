@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -246,7 +246,7 @@ function drawLeads() {
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`leads/${l.id}`, { method: 'DELETE' }); loadLeads(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
+      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),
       l.status === 'nuevo' && Date.now() - Date.parse(l.created_at) > 2 * 86400000 ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Sin contactar hace ${Math.floor((Date.now() - Date.parse(l.created_at)) / 86400000)} días` }) : null,
       l.detail ? el('div', { textContent: l.detail }) : null, el('div', { className: 'row' }, sel, del), notes);
@@ -307,6 +307,29 @@ function settingField(st, after) {
   else { input = el('input', { type: 'text', value: st.value, placeholder: st.example || '', maxLength: st.max, style: 'flex:1;min-width:150px' }); input.addEventListener('change', () => save(input.value, input)); }
   return el('label', { style: 'display:grid;gap:2px' }, el('span', { className: 'row', style: 'flex-wrap:wrap' }, el('span', { textContent: st.label, style: 'min-width:120px' }), input), st.hint ? el('small', { textContent: st.hint }) : null);
 }
+// ---- Catalogo de precios: lo unico que el avatar puede decir que cuesta algo ----
+async function loadCatalog() {
+  const { items, empty } = await json('catalog');
+  $('cat-count').textContent = `(${items.length})`;
+  $('cat-note').textContent = empty ? 'Está vacío: el avatar no dice ningún precio ni envía ofertas. Si le preguntan, responde que tú preparas la cotización, lo anota en el interesado y te avisa.'
+    : 'El avatar solo puede decir estos precios, exactos. Para lo demás responde que tú preparas la cotización. Los cambios aplican desde la conversación siguiente.';
+  $('cat-list').replaceChildren(...items.map((i) => {
+    const toggle = el('button', { type: 'button', className: 'small', textContent: Number(i.active) ? 'Desactivar' : 'Activar' });
+    toggle.addEventListener('click', async () => { await api(`catalog/${i.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !Number(i.active) }) }); loadCatalog(); });
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
+    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`catalog/${i.id}`, { method: 'DELETE' }); loadCatalog(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
+    return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: i.name }), el('span', { className: 'tag', textContent: `${Number(i.price).toLocaleString('es-CO')} ${i.currency}${i.unit ? ' · ' + i.unit : ''}` }), Number(i.active) ? null : el('span', { className: 'tag', textContent: 'Inactivo: no lo dice' })),
+      i.description ? el('small', { textContent: i.description }) : null, el('div', { className: 'row' }, toggle, del));
+  }));
+}
+$('cat-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const r = await api('catalog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('cat-name').value, price: Number($('cat-price').value), currency: $('cat-currency').value, unit: $('cat-unit').value, description: $('cat-description').value }) });
+  const d = await r.json().catch(() => ({}));
+  $('cat-msg').textContent = r.ok ? 'Agregado.' : `No se agregó: ${d.error || 'revisa los datos'}.`;
+  if (r.ok) { ev.target.reset(); loadCatalog(); }
+});
+
 // ---- Aprobaciones: lo que el avatar quiere hacer y necesita tu si. No vencen. ----
 function approvalBody(a, kinds) {
   return [el('div', { className: 'row' }, el('strong', { textContent: kinds[a.kind]?.label || a.kind }), el('span', { className: 'tag', textContent: a.contact.includes('@') ? a.contact : '+' + a.contact }), a.lead_id ? el('span', { className: 'tag', textContent: `Interesado #${a.lead_id}` }) : null),

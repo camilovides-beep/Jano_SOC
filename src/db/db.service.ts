@@ -72,6 +72,9 @@ const SCHEMA = [
      why TEXT NOT NULL DEFAULT '', cost_usd {{REAL}} NOT NULL DEFAULT 0, consent INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pendiente',
      decided_at TEXT NOT NULL DEFAULT '', decided_by TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', nonce TEXT NOT NULL DEFAULT '', tg_message INTEGER, retry_at TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS approvals_status ON approvals (business, status)`,
+  // Catalogo de precios (etapa 2c): lo unico que el avatar puede decir que cuesta algo. Vacio = no dice precios.
+  `CREATE TABLE IF NOT EXISTS catalog (id {{ID}}, business TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', price {{REAL}} NOT NULL, currency TEXT NOT NULL DEFAULT 'COP',
+     unit TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, updated_at {{TS}} NOT NULL)`,
   // Imagenes generadas con IA: el archivo vive en DATA_DIR/imagenes; aqui queda con que descripcion se pidio.
   `CREATE TABLE IF NOT EXISTS generated_images (id {{ID}}, at {{TS}} NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0)`,
   // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.
@@ -130,10 +133,12 @@ export class DbService implements OnModuleDestroy {
         .replace(/{{TS}}/g, pg ? 'TIMESTAMPTZ' : 'TEXT').replace(/{{REAL}}/g, pg ? 'DOUBLE PRECISION' : 'REAL'));
     }
     // Autorizacion explicita (etapa 2): cuando y por donde la persona autorizo que la contacten. Va en las dos bases.
-    if (pg) { await this.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS consent_at TEXT NOT NULL DEFAULT ''`); await this.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS consent_source TEXT NOT NULL DEFAULT ''`); }
+    if (pg) { await this.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS quote_at TEXT NOT NULL DEFAULT ''`); await this.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS consent_at TEXT NOT NULL DEFAULT ''`); await this.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS consent_source TEXT NOT NULL DEFAULT ''`); }
     else if (!(await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads'])).some((c) => c.name === 'consent_at')) {
       await this.raw(`ALTER TABLE leads ADD COLUMN consent_at TEXT NOT NULL DEFAULT ''`); await this.raw(`ALTER TABLE leads ADD COLUMN consent_source TEXT NOT NULL DEFAULT ''`);
     }
+    // Cuando pidio precio (etapa 2c). '' = no lo ha pedido.
+    if (!pg && !(await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads'])).some((c) => c.name === 'quote_at')) await this.raw(`ALTER TABLE leads ADD COLUMN quote_at TEXT NOT NULL DEFAULT ''`);
     if (!pg) { // SQLite de antes: la tabla leads ya existia sin la columna `source`
       const cols = await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads']);
       if (!cols.some((c) => c.name === 'source')) await this.raw(`ALTER TABLE leads ADD COLUMN source TEXT NOT NULL DEFAULT ''`);

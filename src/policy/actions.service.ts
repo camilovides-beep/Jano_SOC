@@ -4,6 +4,7 @@ import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
 import { AlertsService } from '../ops/alerts.service';
 import { OptOutService } from '../security/optout.service';
+import { CatalogService } from './catalog.service';
 import { PolicyService } from './policy.service';
 
 /**
@@ -12,11 +13,15 @@ import { PolicyService } from './policy.service';
  */
 export const ACTION_KINDS = {
   // Primer contacto a un numero que la persona dicto en el sitio: nadie verifico que sea suyo (decision de Javier: a la bandeja).
-  plantilla_bienvenida: { label: 'Plantilla de bienvenida por WhatsApp', channel: 'mensaje', class: 'aprobacion' },
-  mensaje_seguimiento: { label: 'Mensaje de seguimiento', channel: 'mensaje', class: 'autonoma' },
-  llamada_seguimiento: { label: 'Llamada de seguimiento', channel: 'llamada', class: 'autonoma' },
-  oferta: { label: 'Oferta con precio', channel: 'mensaje', class: 'aprobacion' },
-} as const satisfies Record<string, { label: string; channel: 'mensaje' | 'llamada'; class: 'libre' | 'autonoma' | 'aprobacion' }>;
+  // `literal`: `content` es el texto exacto que recibe la persona, asi que pasa la revision de salida (precios e identificacion
+  // como IA). La plantilla no: su texto esta fijo y aprobado en Meta, aqui solo se describe.
+  plantilla_bienvenida: { label: 'Plantilla de bienvenida por WhatsApp', channel: 'mensaje', class: 'aprobacion', literal: false },
+  mensaje_seguimiento: { label: 'Mensaje de seguimiento', channel: 'mensaje', class: 'autonoma', literal: true },
+  llamada_seguimiento: { label: 'Llamada de seguimiento', channel: 'llamada', class: 'autonoma', literal: false },
+  oferta: { label: 'Oferta con precio', channel: 'mensaje', class: 'aprobacion', literal: true },
+} as const satisfies Record<string, { label: string; channel: 'mensaje' | 'llamada'; class: 'libre' | 'autonoma' | 'aprobacion'; literal: boolean }>;
+/** En todo contacto saliente minijavi dice que es el asistente con IA de Javier. Asi se reconoce esa frase en un texto. */
+export const SAYS_AI = /asistente\s+(?:virtual\s+|digital\s+)?(?:con|de)\s+(?:ia|inteligencia\s+artificial)\b|\b(?:ia|inteligencia\s+artificial)\s+de\s+javier\b|\bsoy\s+una?\s+(?:ia|inteligencia\s+artificial)\b/i;
 export type ActionKind = keyof typeof ACTION_KINDS;
 
 export interface ActionRequest {
@@ -55,7 +60,7 @@ export class ActionsService {
   /** Reloj: las pruebas lo cambian para comprobar horarios y topes. */
   now: () => Date = () => new Date();
 
-  constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly policy: PolicyService, private readonly optout: OptOutService, private readonly alerts: AlertsService) {}
+  constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly policy: PolicyService, private readonly optout: OptOutService, private readonly alerts: AlertsService, private readonly catalog: CatalogService) {}
 
   /** Comprueba todo y, si se puede, ejecuta `send` (que devuelve '' o el motivo del fallo). Nunca lanza errores. */
   async run(req: ActionRequest, send: () => Promise<string>): Promise<ActionResult> {
@@ -88,6 +93,13 @@ export class ActionsService {
     if (p.paused) return later('las acciones autónomas están en pausa');
     if (!this.optout.key(req.contact)) return block('el contacto no es un teléfono ni un correo válido');
     if (this.optout.blocked(req.contact)) return block('esa persona pidió no ser contactada');
+    // Revision de salida (2c): permisiva, solo frena fallos claros y comprobables en codigo. Va antes de pedir aprobacion: un
+    // mensaje con un precio fuera del catalogo, o que no dice que es una IA, ni siquiera llega a la bandeja.
+    if (def.literal) {
+      const price = this.catalog.violation(req.content); if (price) return block(`revisión de salida: ${price}`);
+      if (!SAYS_AI.test(req.content)) return block('revisión de salida: el mensaje no dice que es el asistente con IA de Javier');
+    } else if (req.kind !== 'oferta' && this.catalog.violation(req.content)) return block(`revisión de salida: ${this.catalog.violation(req.content)}`);
+    if (req.kind === 'oferta' && this.catalog.empty) return block('no hay catálogo de precios: no se envían ofertas');
     if (!p.production && !p.isTestNumber(req.contact)) return block('producción no está activada y el contacto no es un número de prueba');
     if (!req.approved && (def.class === 'aprobacion' || !req.consent)) return { status: 'requiere_aprobacion', reason: !req.consent ? 'primer contacto sin autorización registrada' : `${def.label}: siempre pide aprobación` };
     const late = p.outsideHours(now); if (late) return later(late);

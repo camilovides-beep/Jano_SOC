@@ -27,6 +27,7 @@ import { CapableModelService } from './llm/capable.service';
 import { PolicyService } from './policy/policy.service';
 import { ActionsService } from './policy/actions.service';
 import { ApprovalsService } from './policy/approvals.service';
+import { CatalogService } from './policy/catalog.service';
 import { TelegramService } from './ops/telegram.service';
 import { OptOutService } from './security/optout.service';
 import { InjectionGuard } from './security/injection.guard';
@@ -48,6 +49,6 @@ import { VisitsService } from './visits/visits.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, TelegramService, OptOutService, InjectionGuard],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

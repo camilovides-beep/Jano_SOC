@@ -133,6 +133,9 @@ proyectos del taller (descargar o eliminar) y dispositivos.
 - **Bandeja de aprobaciones.** Lo que no puede hacer solo (por ejemplo escribirle por primera vez a un número que
   alguien dictó en el sitio) espera el sí del dueño, en el panel o con botones de Telegram. No vencen, y aprobar no se
   salta los límites: al ejecutar se comprueban otra vez.
+- **Precios solo del catálogo.** Mientras el catálogo esté vacío el avatar no dice precios ni envía ofertas: responde
+  que el dueño prepara la cotización, lo anota en el interesado y avisa. Un mensaje autónomo con un precio que no está
+  en el catálogo, o que no dice que es el asistente con IA, no sale. En el chat de WhatsApp tampoco llega a la persona.
 - **Bitácora.** Cada intento, salga o no, queda registrado. Solo se agregan filas y van encadenadas por su huella: si
   alguien cambia o borra una, el panel lo muestra.
 - **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.

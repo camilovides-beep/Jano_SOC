@@ -12,6 +12,7 @@ export interface Lead {
   id: number; created_at: string; name: string; contact: string; company: string;
   interest: string; detail: string; status: string; notes: string;
   source: string;   // de donde llego: voz, llamada, formulario:<proyecto>
+  quote_at: string;  // cuando pidio precio ('' = no lo ha pedido)
   consent_at: string; consent_source: string; // cuando y por donde autorizo que la contacten ('' = sin autorizacion registrada)
 }
 export interface Conversation { id: number; at: string; kind: string; who: string; seconds: number; turns: number; transcript: string; }
@@ -84,6 +85,14 @@ export class LeadsService {
     const status = STATUSES.includes(patch.status as any) ? patch.status! : cur.status;
     const notes = patch.notes === undefined ? cur.notes : clip(patch.notes, 1000);
     await this.db.query('UPDATE leads SET status = $1, notes = $2 WHERE id = $3', [status, notes, id]);
+    return true;
+  }
+  /** La persona pidio precio: queda anotado en el interesado (fecha y nota) y Javier recibe el aviso para cotizarle. */
+  async quoteRequested(id: number, what: string): Promise<boolean> {
+    const cur = await this.get(id); if (!cur) return false;
+    const now = new Date(), note = `${now.toISOString().slice(0, 10)}: pidió cotización${what ? ` — ${clip(what, 240)}` : ''}`;
+    await this.db.query('UPDATE leads SET quote_at = $1, notes = $2 WHERE id = $3', [now.toISOString(), clip(cur.notes ? `${cur.notes}\n${note}` : note, 1000), id]);
+    void this.telegram(`💰 ${cur.name} (${cur.contact}) pidió precio. Le dije que tú le preparas la cotización.${what ? `\nLo que necesita: ${clip(what, 300)}` : ''}\nInteresado #${id}.`).catch(() => undefined);
     return true;
   }
   async remove(id: number): Promise<boolean> { return (await this.db.query('DELETE FROM leads WHERE id = $1 RETURNING id', [id])).length > 0; }

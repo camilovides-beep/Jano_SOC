@@ -8,6 +8,8 @@ import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
 import { VisitsService } from '../visits/visits.service';
+import { ACTION_KINDS, ActionsService } from '../policy/actions.service';
+import { ApprovalsService } from '../policy/approvals.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
@@ -36,9 +38,10 @@ Crea exactamente 3 bocetos de la PORTADA, claramente distintos entre sí en pale
 - Deja también sitio/index.html como índice sencillo con un enlace a cada boceto.
 - Trabaja rápido: son propuestas para elegir, no el sitio terminado. No hagas más páginas.`;
 /** Herramientas cuyo resultado completo es contenido de terceros. */
-const UNTRUSTED: Record<string, string> = { ver_interesados: 'el formulario y las conversaciones públicas', estado_taller: 'los informes de Claude Code', mostrar_proyecto: 'los informes de Claude Code' };
+const UNTRUSTED: Record<string, string> = { que_hiciste: 'la bitácora (nombres y textos de interesados)', ver_interesados: 'el formulario y las conversaciones públicas', estado_taller: 'los informes de Claude Code', mostrar_proyecto: 'los informes de Claude Code' };
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
-export interface ToolContext { origin: string; music?: MusicState; gallery?: GalleryState;
+export interface ToolContext { /** Interesados registrados en esta conversacion (para anotarles algo, como que pidieron precio). */ leadIds?: number[];
+  origin: string; music?: MusicState; gallery?: GalleryState;
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
@@ -83,7 +86,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -216,6 +219,17 @@ export class ToolsService {
       },
     };
     // Portafolio (pedido por Javier el 2026-11-18): casos reales. El detalle completo y la foto salen de aqui; el prompt trae un resumen.
+    // Precios: mientras no haya catalogo el avatar no dice ninguno; esto deja anotado que la persona pidio cotizacion.
+    this.tools.pedir_cotizacion = {
+      description: 'Deja anotado que la persona pidió precio o cotización, para que Javier se la prepare. Úsala cuando pregunten cuánto cuesta algo que no tiene precio autorizado. Requiere que la persona ya esté registrada como interesada en esta conversación.',
+      parameters: { type: 'object', properties: { que_necesita: { type: 'string', description: 'Qué quiere cotizar, en una o dos frases.' } }, required: ['que_necesita'] },
+      run: async (args, ctx) => {
+        const id = ctx.leadIds?.[ctx.leadIds.length - 1];
+        if (!id) return 'Todavía no está registrada: pídele su nombre, un contacto y su autorización, usa registrar_interesado y luego vuelve a llamar a pedir_cotizacion. No le des ningún precio.';
+        const ok = await this.leads.quoteRequested(id, String(args.que_necesita ?? ''));
+        return ok ? 'Anotado: Javier ya recibió el aviso para prepararle la cotización. Dile que Javier le escribe con la cotización; no le des ninguna cifra.' : 'No se pudo anotar. Dile igual que Javier le prepara la cotización.';
+      },
+    };
     this.tools.portafolio = {
       description: 'Trae un caso real del portafolio de Javier con todo su detalle y, si tiene foto, la muestra en pantalla. Úsala al contar un caso o cuando pidan ver trabajos, ejemplos o proyectos que Javier ha hecho. Sin "caso" muestra todos.',
       parameters: { type: 'object', properties: { caso: { type: 'string', description: 'Título del caso, o el sector o tipo de negocio que se busca (por ejemplo "ferretería"). Omítelo para ver todos.' } }, required: [] },
@@ -278,6 +292,22 @@ export class ToolsService {
       },
     };
     // Seguimiento por voz: cambiar el estado de un interesado o dejarle una nota.
+    // Bitacora por voz: "que hiciste hoy".
+    if (actions) this.ownerTools.que_hiciste = {
+      description: 'Cuenta lo que el avatar hizo, intentó o habría hecho por iniciativa propia (mensajes, llamadas, plantillas), según la bitácora. Úsala cuando Javier pregunte "qué hiciste hoy", "a quién le escribiste", "qué tienes pendiente de aprobar".',
+      parameters: { type: 'object', properties: { dias: { type: 'number', description: 'Cuántos días hacia atrás (1 = hoy). Por defecto 1.' } }, required: [] },
+      run: async (args) => {
+        const days = Math.min(30, Math.max(1, Math.round(Number(args.dias) || 1))), st = await actions.status();
+        const since = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+        const rows = (await actions.list({ days, limit: 500 })).filter((r) => days > 1 || r.at.slice(0, 10) >= since);
+        const n = (s: string) => rows.filter((r) => r.status === s).length, pending = approvals ? (await approvals.pending()).length : 0, waiting = approvals ? (await approvals.waiting()).length : 0;
+        const mode = { pausa: 'Las acciones autónomas están EN PAUSA.', simulacion: 'Está en MODO SIMULACIÓN: nada salió de verdad.', pruebas: 'Producción no está activada: solo puede contactar números de prueba.', produccion: 'Está en producción.' }[st.mode as 'pausa'] ?? '';
+        if (!rows.length) return `${mode} En ${days === 1 ? 'el día de hoy' : `los últimos ${days} días`} no hizo ni intentó nada por su cuenta.${pending ? ` Hay ${pending} aprobaciones pendientes.` : ''}`;
+        const last = rows.slice(0, 8).map((r) => `- ${r.at.slice(0, 16).replace('T', ' ')} · ${(ACTION_KINDS as Record<string, { label: string }>)[r.kind]?.label ?? r.kind} a ${r.contact} · ${r.status.replace('_', ' ')}${r.reason ? ` (${r.reason})` : ''} · disparador: ${r.trigger}`);
+        return `${mode} ${days === 1 ? 'Hoy' : `En los últimos ${days} días`}: ${n('enviada')} enviadas, ${n('simulada')} simuladas, ${n('bloqueada')} bloqueadas por los límites, ${n('rechazada')} rechazadas por Javier y ${n('fallo')} con fallo. ` +
+          `Pendientes de aprobación: ${pending}${waiting ? `; aprobadas esperando su momento: ${waiting}` : ''}. Gasto de hoy: ${st.today.usd.toFixed(2)} USD.\nLo más reciente:\n${last.join('\n')}\nResúmelo en dos o tres frases, sin leer la lista entera ni los números de teléfono completos.`;
+      },
+    };
     this.ownerTools.actualizar_interesado = {
       description: 'Cambia el estado de un interesado o le agrega una nota. Úsala cuando Javier diga "marca a Carlos como contactado", "descarta al de la ferretería", "anótale a María que llamo el lunes".',
       parameters: { type: 'object', properties: {

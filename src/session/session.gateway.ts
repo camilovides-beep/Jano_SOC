@@ -19,6 +19,7 @@ import { asData, DEMO_TURNS, DemoState, ToolsService } from '../tools/tools.serv
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
 import { CapableModelService } from '../llm/capable.service';
+import { CatalogService } from '../policy/catalog.service';
 import { OptOutService } from '../security/optout.service';
 import { BLOCKED_NOTE, InjectionGuard, Screen } from '../security/injection.guard';
 import { VisitsService } from '../visits/visits.service';
@@ -125,6 +126,8 @@ const FILLERS: Record<string, string> = {
   mostrar_proyecto: 'Ya te lo muestro.',
   musica: 'Va.',
   resumen_del_dia: 'Déjame revisar qué hay de nuevo.',
+  pedir_cotizacion: 'Listo, lo dejo anotado.',
+  que_hiciste: 'Déjame revisar la bitácora.',
   portafolio: 'Te cuento un caso.',
   guardar_caso: 'Listo, lo anoto en el portafolio.',
 };
@@ -227,7 +230,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
     private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService, private readonly leads: LeadsService, private readonly images: ImagesService, private readonly alerts: AlertsService,
     private readonly portfolio: PortfolioService, private readonly visits: VisitsService,
-    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly capable: CapableModelService,
+    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly capable: CapableModelService, private readonly catalog: CatalogService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -341,7 +344,7 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
@@ -661,7 +664,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { origin: s.origin, music: s.music, gallery: s.gallery, demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);
@@ -688,6 +691,8 @@ export class SessionGateway implements OnGatewayConnection {
       }
     }
     if (!turn.ctrl.signal.aborted) turn.screen?.done(toolsUsed); // lo que de verdad paso, para medir la ruta
+    // Precios en vivo: no se puede frenar la voz, pero si se le escapo uno fuera del catalogo, Javier se entera. (El dolar que da la herramienta no es un precio de Javier.)
+    if (!s.owner && !auto && !s.demo.on && !toolsUsed.includes('precio_dolar') && !toolsUsed.includes('demo')) this.catalog.spoken(turn.spoken, s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio');
     await this.finish(client, s, turn, hit ? 'turno (adelantado)' : 'turno');
   }
 
