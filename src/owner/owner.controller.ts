@@ -3,12 +3,7 @@ import { ConfigService } from '../config/config.service';
 import type { Request, Response } from 'express';
 import { LeadsService, STATUSES } from '../leads/leads.service';
 import { OWNER_COOKIE, OwnerService } from './owner.service';
-import { spawn } from 'node:child_process';
-import { dirname } from 'node:path';
-import * as QRCode from 'qrcode';
-import { WorkshopService } from '../workshop/workshop.service';
 import { UsageService } from '../usage/usage.service';
-import { ImagesService } from '../images/images.service';
 import { DecisionsService } from '../decisions/decisions.service';
 import { Kind, KINDS, QUESTIONS } from '../decisions/questions';
 import { SettingsService } from '../settings/settings.service';
@@ -24,6 +19,7 @@ import { AlertsService } from '../ops/alerts.service';
 import { OpsService } from '../ops/ops.service';
 import { Case, PortfolioService } from '../portfolio/portfolio.service';
 import { VisitsService } from '../visits/visits.service';
+import { SecurityAlertsService } from '../security/security-alerts.service';
 
 // Detras del proxy, la ultima direccion de X-Forwarded-For la puso el proxy (las anteriores las puede inventar el cliente).
 const ipOf = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',').pop()!.trim();
@@ -32,7 +28,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly usage: UsageService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, private readonly security: SecurityAlertsService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -85,10 +81,9 @@ export class OwnerController {
   async summary(@Req() req: Request) {
     this.require(req);
     const [stats, usage, funnel] = await Promise.all([this.leads.stats(30), this.usage.days(30), this.visits.funnel(30)]);
-    const projects = this.workshop.list();
     // Que funciones tienen su clave puesta: sirve para ver de un vistazo por que el avatar dice que no puede hacer algo.
-    const features = { 'Taller de programación': this.workshop.enabled, 'Música': this.music.enabled, 'Búsqueda de fotos': this.images.enabled, 'Generación de imágenes': this.images.canGenerate };
-    return { db: this.leads.dbKind, features, services: this.alerts.status(), alerts: this.alerts.enabled, pending: (await this.leads.pending(this.followDays)).length, stats, funnel, reports: this.cfg.visitReports, portfolio: this.portfolio.visible().length, usage, approvals: (await this.approvals.pending()).length, workshop: { enabled: this.workshop.enabled, projects: projects.length, busy: this.workshop.busy() ?? null, jobs: projects.reduce((a, p) => a + (p.jobs || 0), 0) } };
+    const features = { 'Música': this.music.enabled };
+    return { securityAlerts: this.security.active, db: this.leads.dbKind, features, services: this.alerts.status(), alerts: this.alerts.enabled, pending: (await this.leads.pending(this.followDays)).length, stats, funnel, reports: this.cfg.visitReports, portfolio: this.portfolio.visible().length, usage, approvals: (await this.approvals.pending()).length };
   }
 
   /** Respaldo completo de la base, para descargar desde el panel. */
@@ -154,9 +149,6 @@ export class OwnerController {
   @Delete('portfolio/:id/image')
   async removeCaseImage(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.portfolio.clearImage(Number(id)) }; }
 
-  @Get('jobs')
-  async jobs(@Req() req: Request) { this.require(req); return { jobs: await this.workshop.jobs(100) }; }
-
   // ---- interesados (solo desde un dispositivo registrado) ----
   @Get('leads')
   async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: (await this.leads.list()).map((l) => ({ ...l, blocked: this.optout.blocked(l.contact) })) }; }
@@ -169,7 +161,7 @@ export class OwnerController {
     this.require(req);
     const contact = String(body?.contact ?? '');
     if (!this.optout.key(contact)) throw new HttpException({ error: 'escribe un teléfono (con indicativo) o un correo' }, 400);
-    return { ok: true, added: await this.optout.mark(contact, 'panel', String(body?.note ?? 'Marcado por Javier'), 'javier') };
+    return { ok: true, added: await this.optout.mark(contact, 'panel', String(body?.note ?? 'Marcado por Camilo'), 'dueno') };
   }
   @Delete('optouts/:id')
   async liftOptout(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.optout.lift(Number(id)) }; }
@@ -227,6 +219,27 @@ export class OwnerController {
     return this.approvals.decide(Number(id), body.decision === 'aprobar', 'panel');
   }
 
+  // ---- alertas de seguridad: se ven, se crean a mano y solo aqui (o por voz en modo dueño) se resuelven ----
+  @Get('alerts')
+  async alertsView(@Req() req: Request) {
+    this.require(req);
+    return { active: this.security.active, alerts: await this.security.list(200), webhook: !!this.cfg.alertsWebhookSecret };
+  }
+  @Post('alerts')
+  async addAlert(@Req() req: Request, @Body() body: { title?: string; detail?: string; severity?: string; origin?: string }) {
+    this.require(req);
+    const out = await this.security.open({ source: 'manual', title: String(body?.title ?? ''), detail: String(body?.detail ?? ''), severity: String(body?.severity ?? 'media'), origin: String(body?.origin ?? '') });
+    if (typeof out === 'string') throw new HttpException({ error: out }, 400);
+    return { ok: true, alert: out };
+  }
+  @Post('alerts/:id/resolve')
+  async resolveAlert(@Req() req: Request, @Param('id') id: string, @Body() body: { note?: string }) {
+    this.require(req);
+    const out = await this.security.resolve(Number(id), 'panel', String(body?.note ?? ''));
+    if (typeof out === 'string') throw new HttpException({ error: out }, out.startsWith('no existe') ? 404 : 409);
+    return { ok: true, alert: out };
+  }
+
   // ---- capa de decisiones: quien decide, registro, umbrales y prueba ----
   @Get('decisions')
   async decisionsView(@Req() req: Request, @Query('kind') kind?: string) {
@@ -251,51 +264,5 @@ export class OwnerController {
     const d = await this.decisions.decide(kind, text, QUESTIONS[kind as Kind], { subject: 'prueba del panel', budgetMs: 8000 });
     await d.id;
     return { shadow: d.shadow, ms: d.ms, answers: d.answers, logged: (await this.decisions.list(1, kind))[0] ?? null };
-  }
-
-  // ---- imagenes generadas con IA ----
-  @Get('images')
-  async generatedImages(@Req() req: Request) {
-    this.require(req);
-    return { enabled: this.images.canGenerate, images: (await this.images.listGenerated()).map((i) => ({ ...i, url: `/imagenes/${i.name}` })) };
-  }
-  @Delete('images/:id')
-  async removeImage(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.images.removeGenerated(Number(id)) }; }
-
-  // ---- taller de programacion (solo desde un dispositivo registrado) ----
-  @Get('projects')
-  async projects(@Req() req: Request) {
-    this.require(req);
-    const origin = `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
-    const projects = await Promise.all(this.workshop.list().map(async (p) => {
-      const url = this.workshop.siteUrl(p.slug, origin);
-      return {
-        slug: p.slug, name: p.name, status: p.status, updatedAt: p.updatedAt, jobs: p.jobs, lastTask: p.lastTask ?? '', lastSummary: p.lastSummary ?? '', check: p.check ?? null, repaired: !!p.repaired,
-        url, qr: url ? await QRCode.toDataURL(url, { margin: 1, width: 240 }) : '', files: this.workshop.files(p.slug, 60),
-      };
-    }));
-    return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects };
-  }
-
-  /** Borra el proyecto con su codigo y su sitio publicado. No se puede deshacer. */
-  @Delete('projects/:slug')
-  async removeProject(@Req() req: Request, @Param('slug') slug: string) {
-    this.require(req);
-    const err = await this.workshop.remove(slug);
-    if (err) throw new HttpException({ error: err }, err === 'no_existe' ? 404 : err === 'ocupado' ? 409 : 500);
-    return { ok: true };
-  }
-
-  /** Descarga el proyecto como .tar.gz (sin node_modules ni .git). tar no sigue enlaces simbolicos. */
-  @Get('projects/:slug/descargar')
-  download(@Req() req: Request, @Param('slug') slug: string, @Res() res: Response) {
-    this.require(req);
-    if (!this.workshop.list().some((p) => p.slug === slug)) throw new HttpException({ error: 'no_existe' }, 404);
-    res.setHeader('Content-Type', 'application/gzip');
-    res.setHeader('Content-Disposition', `attachment; filename="${slug}.tar.gz"`);
-    const tar = spawn('tar', ['-czf', '-', '--exclude=node_modules', '--exclude=.git', '-C', dirname(this.workshop.dir(slug)), slug], { stdio: ['ignore', 'pipe', 'ignore'] });
-    tar.stdout.pipe(res);
-    tar.on('error', () => res.destroy());
-    res.on('close', () => tar.kill());
   }
 }

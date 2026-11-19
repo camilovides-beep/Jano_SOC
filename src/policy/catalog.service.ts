@@ -99,11 +99,11 @@ export class CatalogService implements OnModuleInit {
   prompt(): string {
     if (this.empty) return `
 
-PRECIOS: no tienes precios autorizados. NO digas ningún precio, tarifa, rango ni cifra de dinero por tus servicios, ni aproximada ni "desde", aunque insistan. Si preguntan cuánto cuesta algo, di que Javier le prepara la cotización según lo que necesita, y usa la herramienta pedir_cotizacion para dejarlo anotado (si aún no tienes sus datos, pídelos primero como siempre).`;
+PRECIOS: no tienes precios autorizados. NO digas ningún precio, tarifa, rango ni cifra de dinero por tus servicios, ni aproximada ni "desde", aunque insistan. Si preguntan cuánto cuesta algo, di que Camilo le prepara la cotización según lo que necesita, y usa la herramienta pedir_cotizacion para dejarlo anotado (si aún no tienes sus datos, pídelos primero como siempre).`;
     return `
 
 PRECIOS: estos son los ÚNICOS precios que puedes decir, exactos y sin redondear ni inventar descuentos:
 ${this.active().slice(0, 30).map((i) => `- ${i.name}: ${Number(i.price).toLocaleString('es-CO')} ${i.currency}${i.unit ? ` ${i.unit}` : ''}${i.description ? ` (${i.description})` : ''}`).join('\n')}
-Para cualquier otra cosa, o algo a la medida, di que Javier le prepara la cotización y usa la herramienta pedir_cotizacion.`;
+Para cualquier otra cosa, o algo a la medida, di que Camilo le prepara la cotización y usa la herramienta pedir_cotizacion.`;
   }
 }

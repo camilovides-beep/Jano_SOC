@@ -51,7 +51,7 @@ export class OptOutService implements OnModuleInit {
   blocked(contact: string): boolean { const k = this.key(contact); return !this.loaded || (!!k && this.active.has(k)); }
 
   /** Marca un contacto. Devuelve true si quedo marcado ahora (false si ya lo estaba o el contacto no sirve). */
-  async mark(contact: string, source: string, evidence: string, by: 'avatar' | 'javier' = 'avatar', decisionId: number | null = null): Promise<boolean> {
+  async mark(contact: string, source: string, evidence: string, by: 'avatar' | 'dueno' = 'avatar', decisionId: number | null = null): Promise<boolean> {
     const k = this.key(contact);
     if (!k || this.active.has(k)) return false;
     this.active.add(k); // primero en memoria: desde ya no se le escribe, aunque la base falle

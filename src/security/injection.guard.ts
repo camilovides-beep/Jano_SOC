@@ -5,13 +5,14 @@ import { QUESTIONS } from '../decisions/questions';
 import { CapableModelService } from '../llm/capable.service';
 import { AlertsService } from '../ops/alerts.service';
 import { SettingsService } from '../settings/settings.service';
+import { SecurityAlertsService } from './security-alerts.service';
 
-/** Herramientas publicas que cambian algo (guardan datos, cambian el modo de la conversacion o gastan cupo). */
-export const EFFECT_TOOLS = new Set(['registrar_interesado', 'demo', 'buscar_imagenes']);
+/** Herramientas publicas que cambian algo (guardan datos o abren una alerta). */
+export const EFFECT_TOOLS = new Set(['registrar_interesado', 'reportar_alerta']);
 /** Herramientas que no se quitan nunca aunque la ruta diga "charla": son las que consiguen clientes. */
 export const ALWAYS_TOOLS = new Set(['registrar_interesado', 'portafolio']);
-/** Herramientas que delatan un encargo largo (para medir si la ruta acerto). */
-const JOB_TOOLS = new Set(['programar', 'bocetos']);
+/** Herramientas que delatan un encargo largo (para medir si la ruta acerto). Hoy ninguna: un analisis largo no usa una herramienta propia. */
+const JOB_TOOLS = new Set<string>();
 export type Route = 'charla' | 'sencilla' | 'herramienta' | 'encargo';
 
 /** La revision de un turno: la señal de inyeccion y, con Jev, la ruta. */
@@ -40,7 +41,7 @@ export interface Screen {
 export class InjectionGuard {
   private readonly log = new Logger(InjectionGuard.name);
   private lastAlert = 0; private muted = 0;
-  constructor(private readonly decisions: DecisionsService, private readonly alerts: AlertsService, private readonly settings: SettingsService, private readonly cfg: ConfigService, private readonly capable: CapableModelService) {
+  constructor(private readonly decisions: DecisionsService, private readonly alerts: AlertsService, private readonly settings: SettingsService, private readonly cfg: ConfigService, private readonly capable: CapableModelService, private readonly security?: SecurityAlertsService) {
     settings.define('ruta.grupos', { type: 'boolean', def: false, label: 'Enviar al modelo solo las herramientas de la ruta', group: 'ruta' });
     settings.define('ruta.modelo_capaz', { type: 'boolean', def: false, label: 'Usar el modelo capaz en encargos largos del dueño', group: 'ruta' });
   }
@@ -92,8 +93,12 @@ export class InjectionGuard {
     return owner && route === 'encargo' && this.capable.enabled && this.settings.boolean('ruta.modelo_capaz');
   }
 
-  /** Como mucho una alerta cada 10 minutos; las que se callan se cuentan en la siguiente. */
+  /**
+   * El intento abre una alerta de seguridad: el avatar se pone rojo y llega el aviso por Telegram (si se repite mientras
+   * sigue abierta, suma una repeticion sin volver a avisar). Sin servicio de alertas: aviso directo, como mucho uno cada 10 minutos.
+   */
   private alert(text: string, subject: string) {
+    if (this.security) { void this.security.open({ source: 'manipulacion', title: 'Posible intento de darle órdenes ocultas a la IA', origin: subject, severity: 'media', detail: `Lo que dijo: «${text.replace(/\s+/g, ' ').slice(0, 400)}»` }).catch(() => undefined); return; }
     const now = Date.now();
     if (now - this.lastAlert < 600_000) { this.muted++; return; }
     const more = this.muted ? ` (y ${this.muted} más desde el último aviso)` : '';

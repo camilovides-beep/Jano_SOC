@@ -6,13 +6,13 @@ import { OptOutService } from '../security/optout.service';
 
 /** Texto de la variable {{2}} de la plantilla segun el interes guardado. */
 const INTEREST_TEXT: Record<string, string> = {
-  chatbots: 'un chatbot con inteligencia artificial',
-  agentes_de_voz: 'un agente de voz',
-  bots_de_whatsapp: 'un bot de WhatsApp para pedidos y ventas',
-  automatizacion: 'automatizar procesos de tu negocio',
-  dashboards: 'un dashboard con tus indicadores',
-  despliegue_y_servidores: 'el despliegue de tus sistemas',
-  desarrollo_de_software: 'un desarrollo de software a la medida',
+  evaluacion_de_seguridad: 'una revisión de la seguridad de tus sistemas',
+  proteccion_de_cuentas_y_datos: 'proteger tus cuentas y tus datos',
+  fraudes_y_phishing: 'prevenir fraudes y phishing',
+  redes_y_servidores: 'la seguridad de tu red y tus servidores',
+  respuesta_a_incidentes: 'atender un incidente de seguridad',
+  capacitacion: 'capacitar a tu equipo en seguridad',
+  seguridad_de_recintos: 'la seguridad de tu recinto (cámaras, alarmas y control de acceso)',
   otro: 'una solución a la medida',
 };
 

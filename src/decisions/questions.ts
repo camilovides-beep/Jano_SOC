@@ -21,12 +21,12 @@ export const QUESTIONS = {
   ruta: {
     turno: { type: 'choice', ask: '¿Qué tipo de turno es lo último que dijo la persona a un asistente de voz?', fallback: 'herramienta',
       options: { charla: 'Un saludo, una despedida, un comentario o charla que no necesita ningún dato', sencilla: 'Una pregunta que el asistente responde con lo que ya sabe, sin consultar nada',
-        herramienta: 'Necesita un dato en vivo o una acción: hora, clima, dólar, guardar datos de contacto, mostrar imágenes, un caso del portafolio o una demostración' } },
+        herramienta: 'Necesita un dato en vivo o una acción: hora, clima, guardar datos de contacto, reportar un incidente de seguridad o un caso del portafolio' } },
     // Sesion del dueño: las mismas clases y una mas, el encargo largo (el unico caso en que se usaria el modelo mas capaz).
     turno_dueno: { type: 'choice', ask: '¿Qué tipo de turno es lo último que le dijo el dueño a su asistente de voz?', fallback: 'herramienta',
       options: { charla: 'Un saludo, una despedida, un comentario o charla que no necesita ningún dato', sencilla: 'Una pregunta que el asistente responde con lo que ya sabe, sin consultar nada',
-        herramienta: 'Necesita un dato o una acción corta: hora, clima, interesados, consumo, resumen del día, música, imágenes, estado del taller, tareas en Plane',
-        encargo: 'Encarga un trabajo largo de programación o diseño: crear o cambiar un sitio, una página, una aplicación o unos bocetos, con varios requisitos' } },
+        herramienta: 'Necesita un dato o una acción corta: hora, clima, alertas de seguridad, interesados, consumo, resumen del día, música, tareas en Plane',
+        encargo: 'Pide un trabajo largo de seguridad: analizar una configuración o un incidente en detalle, preparar un plan, una política o un informe, con varios requisitos' } },
   },
   no_contactar: {
     pidio: { type: 'yesno', ask: '¿La persona pidió que no la vuelvan a contactar, llamar o escribir, o dijo que no le interesa y que la dejen en paz?', fallback: false, conservative: true,

@@ -11,6 +11,7 @@ const files = [
   'examples/jsm/loaders/GLTFLoader.js',
   'examples/jsm/utils/BufferGeometryUtils.js',
   'examples/jsm/utils/SkeletonUtils.js',
+  'examples/jsm/environments/RoomEnvironment.js',
 ];
 for (const f of files) {
   mkdirSync(dirname(join(dst, f)), { recursive: true });

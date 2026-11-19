@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#101418">
-  <title>Avatar de Javier</title>
+  <title>Guardian</title>
   <link rel="stylesheet" href="./css/style.css">
   <script type="importmap">
     { "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
@@ -18,9 +18,8 @@
 
   <header class="hud">
     <div id="status" class="status" data-state="idle"><span class="dot"></span><span id="status-text">En espera</span></div>
-    <div id="owner" class="owner" hidden>Modo Javier</div>
-    <div id="demo" class="owner demo" hidden></div>
-    <div id="work" class="work" hidden><span class="work-dot"></span><span id="work-text"></span></div>
+    <div id="owner" class="owner" hidden>Modo Camilo</div>
+    <div id="alert" class="alert-badge" role="status" hidden><span class="alert-dot"></span><span id="alert-text"></span></div>
     <div id="mic" class="mic" hidden><span class="mic-dot"></span>Micrófono activo</div>
   </header>
 
@@ -51,10 +50,10 @@
 
   <div id="gate" class="gate">
     <form id="gate-form" class="gate-card">
-      <h1>Avatar de Javier</h1>
+      <h1>Guardian</h1>
       <p id="gate-text">Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.</p>
       <input id="code" type="password" inputmode="text" autocomplete="off" placeholder="Código de acceso" hidden>
-      <button id="btn-start" type="submit">Hablar con Javier</button>
+      <button id="btn-start" type="submit">Hablar con Guardian</button>
       <p id="gate-error" class="gate-error" role="alert"></p>
     </form>
   </div>

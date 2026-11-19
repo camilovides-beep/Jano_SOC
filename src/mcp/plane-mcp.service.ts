@@ -51,7 +51,7 @@ export class PlaneMcpService {
     }
     return this.tools!.map((t) => ({
       type: 'function',
-      function: { name: PLANE_PREFIX + t.name, description: `Plane (gestor de tareas de Javier): ${t.description ?? t.name}`, parameters: t.inputSchema ?? { type: 'object', properties: {} } },
+      function: { name: PLANE_PREFIX + t.name, description: `Plane (gestor de tareas de Camilo): ${t.description ?? t.name}`, parameters: t.inputSchema ?? { type: 'object', properties: {} } },
     }));
   }
 

@@ -1,26 +1,26 @@
 {
-  "chatbots": {
-    "titulo": "Chatbots con IA",
-    "puntos": ["Atienden a tus clientes a cualquier hora", "Responden con la información de tu negocio", "Pasan la conversación a una persona cuando hace falta"]
+  "evaluacion": {
+    "titulo": "Revisión de seguridad",
+    "puntos": ["Encuentra los puntos débiles antes que un atacante", "Sistemas, páginas web y redes", "Informe claro con qué arreglar primero"]
   },
-  "voz": {
-    "titulo": "Agentes de voz",
-    "puntos": ["Conversan por voz, como este avatar", "Para atención, recepción o kioscos", "Integrados con tus sistemas"]
+  "cuentas": {
+    "titulo": "Protección de cuentas y datos",
+    "puntos": ["Contraseñas y verificación en dos pasos", "Copias de seguridad que sí funcionan", "Datos sensibles bien guardados"]
   },
-  "whatsapp": {
-    "titulo": "Bots de pedidos y ventas por WhatsApp",
-    "puntos": ["Reciben pedidos y arman la orden", "Muestran catálogo y responden dudas", "Te avisan de cada venta"]
+  "fraudes": {
+    "titulo": "Fraudes y phishing",
+    "puntos": ["Aprende a reconocer mensajes falsos", "Estafas por WhatsApp, correo y llamadas", "Qué hacer si ya caíste"]
   },
-  "automatizacion": {
-    "titulo": "Automatización con n8n",
-    "puntos": ["Conecta las herramientas que ya usas", "Elimina tareas repetitivas", "Reportes y avisos automáticos"]
+  "incidentes": {
+    "titulo": "Respuesta a incidentes",
+    "puntos": ["Cuenta robada o equipo infectado", "Contener, recuperar y aprender", "Pasos claros desde el primer minuto"]
   },
-  "dashboards": {
-    "titulo": "Dashboards",
-    "puntos": ["Tus indicadores en una sola pantalla", "Datos actualizados automáticamente", "Para decidir con información"]
+  "capacitacion": {
+    "titulo": "Capacitación",
+    "puntos": ["Charlas para tu equipo o tu familia", "Ejemplos reales y prácticos", "Buenos hábitos que se quedan"]
   },
-  "despliegue": {
-    "titulo": "Despliegue de sistemas",
-    "puntos": ["Aplicaciones en servidores con Docker", "Dominio, HTTPS y respaldos", "Puesta en marcha y mantenimiento"]
+  "fisica": {
+    "titulo": "Seguridad de recintos",
+    "puntos": ["Cámaras y alarmas bien configuradas", "Control de acceso, cerraduras y rondas", "Protocolos claros ante una intrusión"]
   }
 }

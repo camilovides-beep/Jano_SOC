@@ -5,7 +5,7 @@ import { ApprovalsService } from '../policy/approvals.service';
 import { PolicyService } from '../policy/policy.service';
 import { WhatsAppService, toPhone } from '../whatsapp/whatsapp.service';
 
-export const INTERESTS = ['chatbots', 'agentes_de_voz', 'bots_de_whatsapp', 'automatizacion', 'dashboards', 'despliegue_y_servidores', 'desarrollo_de_software', 'otro'] as const;
+export const INTERESTS = ['evaluacion_de_seguridad', 'proteccion_de_cuentas_y_datos', 'fraudes_y_phishing', 'redes_y_servidores', 'respuesta_a_incidentes', 'capacitacion', 'seguridad_de_recintos', 'otro'] as const;
 export const STATUSES = ['nuevo', 'contactado', 'en_conversacion', 'cliente', 'descartado'] as const;
 
 export interface Lead {

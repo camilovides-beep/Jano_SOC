@@ -78,18 +78,6 @@ export class ConfigService {
   readonly waIdleMinutes: number;
   /** Tope de mensajes que se le responden a un mismo numero por hora. */
   readonly waMaxPerHour: number;
-  /** Taller de programacion (solo modo dueño): Claude Code con la suscripcion de Javier. Sin token = desactivado. */
-  readonly claudeToken: string;
-  readonly claudeBin: string;
-  readonly claudeModel: string;
-  /** Usuario del sistema con el que corre Claude Code (via sudo). Vacio = el mismo usuario del avatar (solo para local). */
-  readonly tallerUser: string;
-  readonly tallerMaxMinutes: number;
-  readonly tallerMaxTurns: number;
-  readonly tallerMaxProjects: number;
-  readonly tallerNice: number;
-  /** Cada cuantos segundos el avatar cuenta en voz como va el encargo (0 = no lo cuenta solo). */
-  readonly tallerStatusSeconds: number;
   /** Musica de YouTube en modo dueño. Sin clave = sin musica. */
   readonly youtubeApiKey: string;
   readonly musicDefaultQuery: string;
@@ -113,21 +101,14 @@ export class ConfigService {
   readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
   readonly saveConversations: boolean;
-  /** Si la revision del sitio encuentra fallos, devolverselos una vez a Claude Code antes de avisar. */
-  readonly tallerAutoFix: boolean;
-  /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
-  readonly tallerSessionJobs: number;
-  /** Fotos de Unsplash (vacia = sin busqueda) y generacion con Magnific (vacia = sin generacion). Topes por conversacion de visitante y por dia. */
-  readonly unsplashAccessKey: string;
-  readonly magnificApiKey: string;
   readonly imagesDailyGenerations: number;
-  readonly imagesPerSession: number;
-  readonly imagesDailySearches: number;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
   readonly usagePrices: Record<string, number>;
   readonly wakeWords: string[];
   /** Direccion publica del avatar (para enlaces y QR). Vacia = se toma de la conexion. */
   readonly publicUrl: string;
+  /** Clave del webhook de alertas (POST /alertas, cabecera X-Alert-Secret). Vacia = webhook apagado. */
+  readonly alertsWebhookSecret: string;
   readonly callMode: string;
   readonly callPublicIp: string;
   readonly callPortMin: number;
@@ -188,7 +169,7 @@ export class ConfigService {
     this.deepseekModel = str('DEEPSEEK_MODEL', 'deepseek-flash');
     this.timezone = str('TIMEZONE', 'America/Bogota');
     this.defaultCity = str('DEFAULT_CITY', 'Sincelejo');
-    this.greeting = str('GREETING', '¡Hola! Soy Javier. ¿De qué quieres hablar?');
+    this.greeting = str('GREETING', '¡Hola! Soy Guardian. ¿De qué quieres hablar?');
     this.maxSessions = int('MAX_SESSIONS', 2, 1);
     this.sessionMaxSeconds = int('SESSION_MAX_SECONDS', 600, 10);
     this.idleSeconds = int('IDLE_SECONDS', 120, 10);
@@ -232,15 +213,6 @@ export class ConfigService {
     this.whatsappReplies = replies === 'n8n' || replies === 'off' ? replies : 'avatar';
     this.waIdleMinutes = int('WHATSAPP_IDLE_MINUTES', 30, 2);
     this.waMaxPerHour = int('WHATSAPP_MAX_PER_HOUR', 40, 1);
-    this.claudeToken = str('CLAUDE_CODE_OAUTH_TOKEN');
-    this.claudeBin = str('CLAUDE_BIN', 'claude');
-    this.claudeModel = str('CLAUDE_MODEL', 'claude-opus-5-5');
-    this.tallerUser = str('TALLER_USER');
-    this.tallerMaxMinutes = int('TALLER_MAX_MINUTES', 30, 1);
-    this.tallerStatusSeconds = int('TALLER_STATUS_SECONDS', 90, 0);
-    this.tallerMaxTurns = int('TALLER_MAX_TURNS', 200, 1);
-    this.tallerMaxProjects = int('TALLER_MAX_PROJECTS', 50, 1);
-    this.tallerNice = int('TALLER_NICE', 10, 0);
     this.youtubeApiKey = str('YOUTUBE_API_KEY');
     this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));
@@ -248,13 +220,7 @@ export class ConfigService {
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.suspendMaxMinutes = int('SUSPEND_MAX_MINUTES', 120, 1);
     this.micGateRms = process.env.MIC_GATE === '0' ? 0 : Math.min(0.2, Math.max(0.002, Number(process.env.MIC_GATE_RMS) || 0.012));
-    this.tallerAutoFix = process.env.TALLER_AUTO_FIX !== '0';
-    this.tallerSessionJobs = int('TALLER_SESSION_JOBS', 4, 1);
-    this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
-    this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);
-    this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
-    this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();
     if (this.databaseUrl && !/^postgres(ql)?:\/\//.test(this.databaseUrl)) throw new Error('DATABASE_URL debe empezar por postgres://');
     this.saveConversations = process.env.SAVE_CONVERSATIONS === '1';
@@ -271,8 +237,9 @@ export class ConfigService {
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
     catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }
     // Palabra para despertar y las formas en que el reconocedor suele escribirla. La primera es la que se muestra.
-    this.wakeWords = (process.env.WAKE_WORDS || 'javi,javier,xavi,havi,habi,jabi,jabe,javy,jaby,yavi,yabi').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
+    this.wakeWords = (process.env.WAKE_WORDS || 'guardian,gardian,guardianes').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
+    this.alertsWebhookSecret = str('ALERTS_WEBHOOK_SECRET');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     // Una llamada de WhatsApp no tiene navegador: sin voz del servidor no se puede atender.
     if (this.ttsProvider === 'browser' && this.callMode === 'conversar') this.callMode = 'rechazar';
@@ -291,7 +258,7 @@ export class ConfigService {
     this.knowledgeMinScore = Number(str('KNOWLEDGE_MIN_SCORE', '0.25'));
     this.contactUrl = str('CONTACT_URL');
     this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
-    this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Javier');
+    this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Camilo');
     this.cardsFile = str('CARDS_FILE', 'content/tarjetas.json');
     this.cardsEnabled = ['true', '1', 'si', 'sí'].includes(str('CARDS_ENABLED', 'false').toLowerCase());
     this.visitorMemoryDays = int('VISITOR_MEMORY_DAYS', 90, 0);

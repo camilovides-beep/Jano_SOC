@@ -40,19 +40,16 @@ function onMusic(msg) {
   else if (msg.action === 'stop') music.stop();
   else if (msg.action === 'volume') music.setVolume(msg.volume);
 }
-// Taller de programacion (modo dueño): mientras Claude Code trabaja, el fondo es un editor, las gafas reflejan el
-// codigo y arriba se ve en que va. Los fondos que pide una respuesta mandan mientras el avatar habla.
-let work = null;
-const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : null);
+// Fondo de reposo: el de la actividad de suspension, si hay una. Los fondos que pide una respuesta mandan mientras habla.
+const restScene = () => (activity ? ACTIVITIES[activity].scene : null);
 // Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
 // rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.
 const ACTIVITIES = {
-  juego: { scene: 'pong', label: '🏓 Jugando ping-pong' },
   dormir: { scene: 'noche', label: '😴 Durmiendo', emoji: ['💤'], every: 1.5 },
   leer: { scene: 'codigo', label: '📖 Leyendo código' },
   musica: { scene: 'ecualizador', label: '🎧 Oyendo música', emoji: ['🎵', '🎶'], every: 0.9 },
 };
-let suspended = false, dormant = false, wakeWord = 'Javi', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
+let suspended = false, dormant = false, wakeWord = 'Guardian', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
 function setActivity(name) {
   if (name === activity) return;
   activity = name; avatar.setActivity(name);
@@ -77,33 +74,31 @@ function runActivities(now) {
   }
   const a = ACTIVITIES[activity];
   if (a.emoji && now >= floatAt) { floatAt = now + a.every * 1000; floatEmoji($('fx'), a.emoji); }
-  if (activity === 'juego') { const b = backdrop.ball; avatar.look(b.x * 0.9, b.y * 0.7); }
   if (activity === 'dormir' && now >= startleAt) { startleAt = now + 14000 + Math.random() * 12000; avatar.react('sorpresa'); } // se despierta sobresaltado y vuelve a dormirse
   if (activity === 'leer' && now >= startleAt) { startleAt = now + 8000 + Math.random() * 8000; avatar.react(Math.random() < 0.5 ? 'pensativo' : 'alegria'); }
 }
-function setWork(msg) {
-  work = msg && msg.active ? msg : null;
-  avatar.setWork(!!work, work?.code);
-  $('work').hidden = !work;
-  if (work) {
-    const min = Math.floor((work.seconds || 0) / 60), sec = String((work.seconds || 0) % 60).padStart(2, '0');
-    const agents = work.agentsTotal ? ` · ${work.agentsTotal} ${work.agentsTotal === 1 ? 'agente' : 'agentes'}` : '';
-    $('work-text').textContent = `${work.project} · ${work.model} · ${min}:${sec} · ${work.steps} pasos${agents} · ${work.activity}`;
-  }
-  if (state !== 'speaking') backdrop.show(restScene());
-}
 const backdrop = createBackdrop($('backdrop'));
-backdrop.onScore = (who) => { if (activity === 'juego') avatar.react(who === 'avatar' ? 'celebracion' : 'pena'); };
+// Alertas de seguridad: mientras haya alguna abierta, los ojos, la llama y la cresta se ponen rojos (en todas las pantallas,
+// haya conversacion o no). El servidor avisa al instante por el WebSocket; ademas se consulta cada pocos segundos.
+let alertOn = false;
+function setAlert(on, count) {
+  alertOn = !!on; avatar.setAlert(alertOn);
+  $('alert').hidden = !alertOn; $('alert-text').textContent = alertOn ? (count > 1 ? `${count} alertas de seguridad abiertas` : 'Alerta de seguridad abierta') : '';
+}
+async function pollAlerts() {
+  try { const r = await fetch('/alertas/estado', { cache: 'no-store' }); if (r.ok) { const d = await r.json(); setAlert(d.active > 0, d.active); } } catch { /* sin red: se mantiene como estaba */ }
+}
+pollAlerts(); setInterval(pollAlerts, 4000);
 let audioCtx = null, player = null, socket = null, mic = null;
 let state = 'idle', live = false, connecting = false, speechId = -1, subChars = [], subShown = 0, wasPlaying = false, closeReason = '';
 // Modo espera: tras el primer toque el microfono queda abierto en el navegador (sin enviar nada). Cuando alguien habla,
 // la conversacion arranca sola y lo que dijo mientras se conectaba se envia desde este pequeno buffer.
 let armed = false, loud = 0, retryAt = 0;
 const prebuffer = [];
-// Compuerta del microfono: suspendido, o con musica o un encargo en curso y 20 s sin que nadie hable, el audio solo se
+// Compuerta del microfono: suspendido, o con musica y 20 s sin que nadie hable, el audio solo se
 // envia cuando hay voz. El servidor decide si se usa y con que umbral (`ready.gate`).
 let gate = null, lastTalk = 0;
-const ecoMode = (now) => !!gate && (suspended || ((!!work || music.active) && state === 'listening' && now - lastTalk > 20000));
+const ecoMode = (now) => !!gate && (suspended || (music.active && state === 'listening' && now - lastTalk > 20000));
 
 // Identificador al azar de este navegador, para que el avatar reconozca a quien vuelve. En un kiosco compartido se
 // desactiva con ?kiosco=1 (todas las personas usarian el mismo navegador).
@@ -128,23 +123,17 @@ function showCard(card) {
 }
 function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; }
 
-// Galeria: fotos (Pexels) o bocetos en vivo (paginas del taller), numerados al lado del avatar. La seleccionada se pone
-// ademas de fondo. Los bocetos van en iframes aislados (sandbox): son paginas escritas por Claude Code.
+// Galeria: fotos del portafolio, numeradas al lado del avatar. La seleccionada se pone ademas de fondo.
 let gallery = null;
-function frameOf(url) { const f = document.createElement('iframe'); f.src = url; f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('scrolling', 'no'); f.tabIndex = -1; f.loading = 'lazy'; f.title = ''; return f; }
 function selectGallery(index, tell) {
   if (!gallery) return;
   gallery.index = Math.max(0, Math.min(gallery.items.length - 1, index));
   const item = gallery.items[gallery.index];
   [...$('gallery-items').children].forEach((el, i) => { el.classList.toggle('on', i === gallery.index); if (i === gallery.index) el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
   const bg = $('photo-bg');
-  if (item.frame) bg.replaceChildren(frameOf(item.frame)); else { const img = new Image(); img.src = item.full || item.thumb; img.alt = ''; bg.replaceChildren(img); }
+  const img = new Image(); img.src = item.full || item.thumb; img.alt = ''; bg.replaceChildren(img);
   bg.classList.add('on');
-  const credit = $('gallery-credit'); credit.replaceChildren();
-  if (gallery.kind === 'fotos') { // condiciones de Unsplash: credito al fotografo y a Unsplash, con enlace
-    const a = document.createElement('a'); a.href = item.link || 'https://unsplash.com'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = item.credit || 'Fotos de Unsplash';
-    credit.append(a);
-  } else credit.textContent = gallery.kind === 'generadas' ? `${item.credit || ''} · ${item.label || ''}` : item.label || '';
+  $('gallery-credit').textContent = item.label || '';
   if (tell) socket?.send({ type: 'gallery', index: gallery.index });
 }
 function showGallery(msg) {
@@ -155,14 +144,12 @@ function showGallery(msg) {
   document.body.classList.add('showing'); // el avatar se achica a la esquina y la imagen se ve en grande
   $('gallery-items').replaceChildren(...msg.items.map((item, i) => {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'gallery-item'; b.setAttribute('aria-label', `${i + 1}: ${item.label || ''}`);
-    if (item.frame) b.append(frameOf(item.frame)); else { const img = new Image(); img.src = item.thumb; img.alt = item.label || ''; img.loading = 'lazy'; b.append(img); }
+    const img = new Image(); img.src = item.thumb; img.alt = item.label || ''; img.loading = 'lazy'; b.append(img);
     const num = document.createElement('span'); num.textContent = String(i + 1); b.append(num);
     b.addEventListener('click', () => selectGallery(i, true));
     return b;
   }));
   $('gallery').hidden = false;
-  // Las miniaturas de bocetos son la pagina completa (1280 px de ancho) reducida al ancho de la miniatura.
-  requestAnimationFrame(() => { for (const el of $('gallery-items').children) { const f = el.querySelector('iframe'); if (f) f.style.transform = `scale(${el.clientWidth / 1280})`; } });
   selectGallery(gallery.index, false);
 }
 function hideGallery() { gallery = null; document.body.classList.remove('showing'); $('gallery').hidden = true; $('gallery-items').replaceChildren(); $('photo-bg').classList.remove('on'); setTimeout(() => { if (!gallery) $('photo-bg').replaceChildren(); }, 900); }
@@ -219,14 +206,12 @@ function onMessage(msg) {
       backdrop.show(msg.name); break;
     case 'card':
       showCard(msg); break;
-    case 'demo': // demostracion en vivo: el avatar esta haciendo de asistente de otro negocio
-      $('demo').hidden = !msg.on; $('demo').textContent = msg.on ? `Demostración: asistente de ${msg.title}` : ''; break;
-    case 'gallery': // fotos o bocetos al lado del avatar
+    case 'gallery': // fotos del portafolio al lado del avatar
       showGallery(msg); break;
     case 'music': // musica de fondo
       onMusic(msg); break;
-    case 'work': // progreso del taller de programacion
-      setWork(msg); break;
+    case 'alert': // se abrio o se resolvio una alerta de seguridad
+      setAlert(msg.active > 0, msg.active); break;
     case 'suspend': // entra o sale del modo suspension
       setSuspended(msg.on, msg.notice); break;
     case 'interrupt': // el usuario hablo encima: se corta el audio y la boca vuelve a reposo
@@ -239,9 +224,9 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  music.stop(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
-  $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
+  $('mic').hidden = true; $('owner').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
   $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');
@@ -317,7 +302,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, alert: setAlert, music: onMusic, message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

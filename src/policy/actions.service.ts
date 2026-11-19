@@ -83,7 +83,7 @@ export class ActionsService {
 
   /** Javier rechazo en la bandeja una accion que esperaba aprobacion: queda anotado en la bitacora y no se hace nada. */
   async rejected(req: ActionRequest, by: string): Promise<number | null> {
-    return this.append(req, ACTION_KINDS[req.kind]?.channel ?? '', 'rechazada', `rechazada por Javier (${by})`, false);
+    return this.append(req, ACTION_KINDS[req.kind]?.channel ?? '', 'rechazada', `rechazada por Camilo (${by})`, false);
   }
 
   /** Por que NO puede salir esta accion ahora (null = puede salir). El orden importa: lo mas grave primero. */
@@ -97,7 +97,7 @@ export class ActionsService {
     // mensaje con un precio fuera del catalogo, o que no dice que es una IA, ni siquiera llega a la bandeja.
     if (def.literal) {
       const price = this.catalog.violation(req.content); if (price) return block(`revisión de salida: ${price}`);
-      if (!SAYS_AI.test(req.content)) return block('revisión de salida: el mensaje no dice que es el asistente con IA de Javier');
+      if (!SAYS_AI.test(req.content)) return block('revisión de salida: el mensaje no dice que es el asistente con IA de Camilo');
     } else if (req.kind !== 'oferta' && this.catalog.violation(req.content)) return block(`revisión de salida: ${this.catalog.violation(req.content)}`);
     if (req.kind === 'oferta' && this.catalog.empty) return block('no hay catálogo de precios: no se envían ofertas');
     if (!p.production && !p.isTestNumber(req.contact)) return block('producción no está activada y el contacto no es un número de prueba');

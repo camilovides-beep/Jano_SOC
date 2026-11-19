@@ -1,4 +1,4 @@
-// Panel privado de Javier: registro del dispositivo, cifras, interesados, conversaciones, consumo, taller y dispositivos.
+// Panel privado de Camilo: registro del dispositivo, alertas de seguridad, cifras, interesados, conversaciones, consumo y dispositivos.
 const $ = (id) => document.getElementById(id);
 const api = (path, opts) => fetch(new URL(`owner/${path}`, window.location.href), { credentials: 'same-origin', ...opts });
 const json = async (path) => { const r = await api(path); if (!r.ok) throw new Error(String(r.status)); return r.json(); };
@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, alertas: loadAlerts, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -98,7 +98,8 @@ async function loadSummary() {
   $('tiles').replaceChildren(
     tile(n(s.total), 'Interesados en total'), tile(n(nuevo), 'Sin contactar'), tile(n(summary.pending), 'Esperando hace días'), tile(n(last7), 'Interesados en 7 días'),
     tile(n(s.conversations), 'Conversaciones guardadas, 30 días'), tile(`${n(s.talkSeconds / 60)} min`, 'Tiempo conversado, 30 días'),
-    ...(summary.workshop.enabled ? [tile(n(summary.workshop.projects), 'Proyectos del taller')] : []));
+    tile(n(summary.securityAlerts || 0), 'Alertas de seguridad abiertas'));
+  markAlertTab(summary.securityAlerts || 0);
   $('features').replaceChildren('Funciones: ', ...Object.entries(summary.features || {}).flatMap(([name, on], i) => [i ? ' · ' : '', el('span', { style: `color:${on ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${on ? '✓' : '✗'} ${name}${on ? '' : ' (falta su clave)'}` })]));
   const sv = Object.entries(summary.services || {});
   $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : '#ff8a8a'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
@@ -111,8 +112,7 @@ async function loadSummary() {
 
 /**
  * Embudo: una barra por paso, todas medidas contra el total de conversaciones (el porcentaje va escrito al lado).
- * Los pasos no son uno dentro de otro (se puede dejar datos sin hacer la demostracion); por eso la segunda tarjeta
- * compara, entre quienes mostraron interes, cuantos dejaron datos con y sin demostracion, y con y sin caso contado.
+ * La segunda tarjeta compara, entre quienes mostraron interes, cuantos dejaron datos con y sin un caso del portafolio contado.
  */
 function drawFunnel(f, reports) {
   const pc = (a, b) => (b ? Math.round((a / b) * 100) : 0);
@@ -123,11 +123,10 @@ function drawFunnel(f, reports) {
     $('funnel-note').textContent = ''; $('funnel-split').replaceChildren(el('p', { className: 'muted', textContent: 'Sin datos todavía.' })); return;
   }
   const t = f.conversations;
-  $('funnel').replaceChildren(bar('Conversaciones', t, t, false, 'var(--s1)'), bar('Mostraron interés', f.interested, t, false, 'var(--s1)'), bar('Se les ofreció la demostración', f.demoOffered, t, false, 'var(--s1)'),
-    bar('Hicieron la demostración', f.demoDone, t, false, 'var(--s1)'), bar('Dejaron sus datos', f.leads, t, false, 'var(--s1)'));
-  $('funnel-note').textContent = `Porcentajes sobre las ${n(t)} conversaciones${f.calls || f.chats ? ` (${[f.calls ? `${n(f.calls)} llamadas de WhatsApp` : '', f.chats ? `${n(f.chats)} chats de WhatsApp` : ''].filter(Boolean).join(' y ')})` : ''}.` + (reports ? '' : ' El análisis está apagado (VISIT_REPORTS=0): "mostraron interés" solo cuenta a quienes hicieron la demostración o dejaron datos.');
+  $('funnel').replaceChildren(bar('Conversaciones', t, t, false, 'var(--s1)'), bar('Mostraron interés', f.interested, t, false, 'var(--s1)'), bar('Dejaron sus datos', f.leads, t, false, 'var(--s1)'));
+  $('funnel-note').textContent = `Porcentajes sobre las ${n(t)} conversaciones${f.calls || f.chats ? ` (${[f.calls ? `${n(f.calls)} llamadas de WhatsApp` : '', f.chats ? `${n(f.chats)} chats de WhatsApp` : ''].filter(Boolean).join(' y ')})` : ''}.` + (reports ? '' : ' El análisis está apagado (VISIT_REPORTS=0): "mostraron interés" solo cuenta a quienes dejaron datos.');
   const pair = (title, s, withLabel, withoutLabel) => [el('small', { textContent: title }), bar(withLabel, s.withLeads, s.withN, true, 'var(--s3)'), bar(withoutLabel, s.withoutLeads, s.withoutN, true, 'var(--s4)')];
-  $('funnel-split').replaceChildren(...pair('Demostración en vivo', f.demo, 'Con demostración', 'Sin demostración'), ...pair('Caso del portafolio', f.cases, 'Con un caso contado', 'Sin caso'),
+  $('funnel-split').replaceChildren(...pair('Caso del portafolio', f.cases, 'Con un caso contado', 'Sin caso'),
     ...(f.interested < 20 ? [el('small', { textContent: `Con ${n(f.interested)} ${f.interested === 1 ? 'conversación' : 'conversaciones'} con interés todavía es pronto para sacar conclusiones.` })] : []));
 }
 
@@ -144,7 +143,7 @@ function drawVisits() {
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`visits/${v.id}`, { method: 'DELETE' }); loadVisits(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
       el('div', { className: 'row' }, el('strong', { textContent: v.kind === 'llamada' ? 'Llamada de WhatsApp' : v.kind === 'whatsapp' ? 'Chat de WhatsApp' : 'Conversación en el sitio' }), tag(pretty(v.interest), !!v.interest), tag('Dejó sus datos', !!Number(v.lead)),
-        tag(Number(v.demo_done) ? 'Hizo la demostración' : 'Demostración ofrecida', !!Number(v.demo_done) || !!Number(v.demo_offered)), tag('Caso del portafolio', !!Number(v.cases)), tag('Sin interés', !Number(v.interested))),
+        tag('Caso del portafolio', !!Number(v.cases)), tag('Sin interés', !Number(v.interested))),
       el('small', { textContent: `${fecha(v.at)} · ${v.seconds < 90 ? `${v.seconds} s` : `${min(v.seconds)} min`} · ${v.turns} ${v.turns === 1 ? 'intervención' : 'intervenciones'} de la persona` }),
       v.summary ? el('div', { textContent: v.summary }) : el('div', { className: 'muted', textContent: 'Sin resumen.' }), lines('Preguntó', v.asked), lines('Dudas u objeciones', v.objections), el('div', { className: 'row' }, del));
   }) : [el('p', { className: 'muted', textContent: visits.length ? 'Ninguna mostró interés todavía. Marca la casilla para verlas todas.' : 'Todavía no hay visitas registradas.' })]));
@@ -222,7 +221,7 @@ async function loadOptouts() {
   $('optout-list').replaceChildren(...optouts.map((o) => {
     const lift = el('button', { type: 'button', className: 'small', textContent: 'Quitar marca' });
     lift.addEventListener('click', async () => { if (lift.dataset.sure) { await api(`optouts/${o.id}`, { method: 'DELETE' }); loadLeads(); } else { lift.dataset.sure = '1'; lift.textContent = '¿Seguro? Podrá volver a ser contactado. Toca otra vez'; } });
-    return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: o.contact.includes('@') ? o.contact : '+' + o.contact }), el('span', { className: 'tag', textContent: o.marked_by === 'javier' ? 'Marcado por ti' : 'Lo pidió' })),
+    return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: o.contact.includes('@') ? o.contact : '+' + o.contact }), el('span', { className: 'tag', textContent: ['dueno', 'javier'].includes(o.marked_by) ? 'Marcado por ti' : 'Lo pidió' })),
       el('small', { textContent: `${fecha(o.at)} · ${o.source}` }), o.evidence ? el('div', { textContent: `«${o.evidence}»` }) : null, el('div', { className: 'row' }, lift));
   }));
 }
@@ -281,20 +280,17 @@ async function loadUsage() {
   barChart($('ch-listen'), labels, [{ name: 'Conversando', values: col((d) => Math.max(0, (d.deepgram_s || 0) - (d.deepgram_susp_s || 0)) / 60) }, { name: 'Suspendido', values: col((d) => (d.deepgram_susp_s || 0) / 60) }], 'min');
   barChart($('ch-tokens'), labels, [{ name: 'Desde caché', values: col((d) => d.deepseek_cache || 0) }, { name: 'Sin caché', values: col((d) => Math.max(0, (d.deepseek_in || 0) - (d.deepseek_cache || 0))) }], 'tokens');
   barChart($('ch-voice'), labels, [{ name: 'Caracteres de voz', values: col((d) => d.eleven_chars || 0) }], 'caracteres');
-  barChart($('ch-claude'), labels, [{ name: 'Minutos de Claude Code', values: col((d) => (d.claude_s || 0) / 60) }], 'min');
   const cols = [
     ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)], ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
     ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
     ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
     ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
-    ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
     ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
   ];
   const row = (cells, tag) => el('tr', {}, ...cells.map((c) => el(tag, { textContent: c })));
   $('usage-table').replaceChildren(row(cols.map((c) => c[0]), 'th'), ...(days.length ? days.map((d) => row(cols.map((c) => c[1](d)), 'td')) : [row(['Sin datos todavía'], 'td')]));
 }
 
-// ---------- taller ----------
 // ---- Autonomia: los limites dentro de los que el avatar actua solo. Cada cambio se guarda al salir del campo. ----
 const MODES = { pausa: '⏸ En pausa: no hace nada por su cuenta.', simulacion: '🧪 Simulación: nada sale de verdad; la bitácora anota lo que habría hecho.', pruebas: '🔬 Pruebas: solo puede contactar a los números de prueba.', produccion: '🟢 Producción: actúa de verdad, dentro de los límites.' };
 const STATUS_LABEL = { enviada: 'Enviada', simulada: 'Simulada', requiere_aprobacion: 'Espera aprobación', rechazada: 'Rechazada por ti', bloqueada: 'Bloqueada', fallo: 'Falló' };
@@ -450,52 +446,52 @@ $('dec-test').addEventListener('submit', async (ev) => {
   loadDecisions();
 });
 
-async function loadImages() {
-  const { enabled, images } = await json('images');
-  $('image-count').textContent = `(${images.length})`;
-  $('image-note').textContent = images.length ? 'Todas las que le pides al avatar quedan aquí guardadas, con la descripción que diste. Toca una para verla completa.'
-    : enabled ? 'Todavía no hay ninguna. Pídele al avatar, en modo dueño, que genere una imagen y quedará aquí.' : 'La generación de imágenes no está configurada en el servidor (falta su clave).';
-  $('image-grid').replaceChildren(...images.map((i) => {
-    const pic = el('a', { className: 'pic', href: i.url, target: '_blank', rel: 'noopener' }, el('img', { src: i.url, alt: i.prompt || 'Imagen generada', loading: 'lazy' }));
-    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
-    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`images/${i.id}`, { method: 'DELETE' }); loadImages(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
-    return el('figure', {}, pic, el('figcaption', { textContent: i.prompt || 'Sin descripción guardada (generada antes de este cambio)' }),
-      el('small', { textContent: `${fecha(i.at)}${i.format ? ` · ${i.format}` : ''} · ${Math.round(i.bytes / 1024)} KB` }),
-      el('div', { className: 'row' }, el('a', { href: i.url, download: `imagen-${i.id}.${i.name.split('.').pop()}`, textContent: 'Descargar' }), del));
-  }));
-}
-
-let projectTimer = null;
-async function loadProjects() {
-  const { enabled, busy, progress, projects } = await json('projects');
-  $('project-count').textContent = `(${projects.length})`;
-  $('project-progress').textContent = !enabled ? 'El taller no está configurado en el servidor.' : busy ? progress : 'Sin encargos en curso.';
-  $('project-list').replaceChildren(...projects.map((p) => {
-    const sum = el('pre', { textContent: p.lastSummary || 'Sin resultado todavía.' });
-    const chk = !p.check ? null : el('div', { style: `color:${p.check.ok ? 'var(--ok)' : 'var(--warn)'};white-space:pre-wrap`, textContent: p.check.ok
-      ? `✓ Sitio revisado: ${p.check.pages} páginas, ${p.check.files} archivos, sin enlaces rotos${p.repaired ? ' (tras una corrección automática)' : ''}`
-      : `⚠ La revisión encontró ${p.check.issues.length} problemas:\n- ${p.check.issues.join('\n- ')}` });
-    const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
-    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
-    del.addEventListener('click', async () => {
-      if (!del.dataset.sure) { del.dataset.sure = '1'; del.textContent = '¿Seguro? Se borran el código y el sitio. Toca otra vez'; return; }
-      del.disabled = true;
-      const r = await api(`projects/${p.slug}`, { method: 'DELETE' });
-      if (r && r.ok === false) { const e = (await r.json().catch(() => ({}))).error; del.textContent = e === 'ocupado' ? 'Tiene un encargo en curso' : 'No se pudo borrar'; return; }
-      loadProjects();
+// ---------- alertas de seguridad ----------
+// Mientras haya alguna abierta, el avatar esta en rojo en todas las pantallas. Solo aqui (o por voz, en modo dueño) se resuelven.
+const SEVERITY = { baja: '🟡 Baja', media: '🟠 Media', alta: '🔴 Alta', critica: '🚨 Crítica' };
+const ALERT_SOURCE = { sistema: 'Sistema externo', conversacion: 'Reporte en conversación', manipulacion: 'Intento de manipulación', manual: 'Creada por ti' };
+function markAlertTab(active) { const t = $('tab-alertas'); t.textContent = active ? `Alertas (${active})` : 'Alertas'; t.style.color = active ? '#ff6b6b' : ''; }
+let alertTimer = null;
+async function loadAlerts() {
+  const { active, alerts, webhook } = await json('alerts');
+  markAlertTab(active);
+  $('alert-count').textContent = `(${active} ${active === 1 ? 'abierta' : 'abiertas'})`;
+  $('alert-note').textContent = active ? 'El avatar está en rojo. Cuando atiendas una alerta, márcala como resuelta; al no quedar ninguna abierta vuelve al azul.' : 'No hay alertas abiertas: el avatar está en azul.';
+  $('alert-list').replaceChildren(...(alerts.length ? alerts.map((a) => {
+    const open = a.status === 'abierta';
+    const note = el('input', { placeholder: 'Qué se hizo (opcional)', maxLength: 600, style: 'flex:1;min-width:180px' });
+    const done = el('button', { type: 'button', className: 'small', textContent: 'Marcar como resuelta' });
+    done.addEventListener('click', async () => {
+      done.disabled = true;
+      const r = await api(`alerts/${a.id}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: note.value }) });
+      if (r && r.ok === false) { done.disabled = false; done.textContent = 'No se pudo, reintenta'; return; }
+      loadAlerts();
     });
-    const files = el('details', {}, el('summary', { textContent: `Archivos (${p.files.length})` }), el('pre', { textContent: p.files.join('\n') }));
-    return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: p.name }), el('span', { className: 'tag', textContent: p.status })),
-      el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, links,
-      p.qr ? el('img', { src: p.qr, alt: `Código QR de ${p.name}`, width: 160, height: 160 }) : null, files);
-  }));
-  const { jobs } = await json('jobs');
-  const row = (cells, tag) => el('tr', {}, ...cells.map((c) => el(tag, { textContent: c })));
-  $('jobs-table').replaceChildren(row(['Fecha', 'Proyecto', 'Modelo', 'Duración', 'Pasos', 'USD equiv.', 'Resultado', 'Revisión'], 'th'), ...(jobs.length ? jobs.map((j) => row([
-    fecha(j.at), j.slug + (Number(j.repair) ? ' (corrección)' : ''), j.model, j.seconds < 90 ? `${j.seconds} s` : `${min(j.seconds)} min`, n(j.turns), Number(j.usd).toFixed(2),
-    Number(j.ok) ? 'Terminó' : 'No terminó', j.issues === null ? 'Sin sitio' : Number(j.issues) ? `${j.issues} fallos` : 'Sin fallos'], 'td')) : [row(['Aún no hay encargos registrados (se guardan desde esta versión).'], 'td')]));
-  clearTimeout(projectTimer); if (busy && !document.querySelector('[data-view="taller"]').hidden) projectTimer = setTimeout(loadProjects, 5000); // mientras trabaja, se actualiza solo
+    return el('li', { style: open ? 'border-left:4px solid #ff4d4d;padding-left:10px' : 'opacity:.7' },
+      el('div', { className: 'row' }, el('strong', { textContent: `#${a.id} ${a.title}` }), el('span', { className: 'tag', textContent: SEVERITY[a.severity] || a.severity }),
+        el('span', { className: 'tag', textContent: ALERT_SOURCE[a.source] || a.source }), el('span', { className: 'tag', textContent: open ? 'Abierta' : 'Resuelta' }),
+        Number(a.count) > 1 ? el('span', { className: 'tag', textContent: `Se repitió ${a.count} veces` }) : null),
+      el('small', { textContent: `${fecha(a.created_at)}${a.origin ? ` · ${a.origin}` : ''}${open ? '' : ` · resuelta ${fecha(a.resolved_at)} (${a.resolved_by === 'voz' ? 'por voz' : 'en el panel'})`}` }),
+      a.detail ? el('div', { textContent: a.detail }) : null,
+      !open && a.resolution ? el('div', { className: 'muted', textContent: `Cómo se resolvió: ${a.resolution}` }) : null,
+      open ? el('div', { className: 'row' }, note, done) : null);
+  }) : [el('p', { className: 'muted', textContent: 'Todavía no hay alertas.' })]));
+  const url = `${location.origin}/alertas`;
+  $('alert-webhook').textContent = webhook
+    ? `Cámaras, sensores, alarmas o un detector de intrusos pueden abrir alertas enviando un POST a ${url} con la cabecera X-Alert-Secret (el valor de ALERTS_WEBHOOK_SECRET en el servidor).`
+    : 'El webhook para sistemas externos está apagado: pon una clave larga en ALERTS_WEBHOOK_SECRET en el servidor para activarlo.';
+  $('alert-example').textContent = `curl -X POST ${url} \\\n  -H "Content-Type: application/json" -H "X-Alert-Secret: TU_CLAVE" \\\n  -d '{"titulo":"Movimiento en la bodega","detalle":"Cámara 3, 2:14 a. m.","severidad":"alta","origen":"Cámara bodega"}'`;
+  clearTimeout(alertTimer); if (!document.querySelector('[data-view="alertas"]').hidden) alertTimer = setTimeout(loadAlerts, 8000); // se actualiza sola mientras esta abierta
 }
+$('alert-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const body = { title: $('alert-title').value, severity: $('alert-severity').value, origin: $('alert-origin').value, detail: $('alert-detail').value };
+  const r = await api('alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  $('alert-msg').textContent = r.ok ? `Alerta #${d.alert?.id} abierta. El avatar ya está en rojo.` : `No se abrió: ${d.error || 'error'}`;
+  if (r.ok) { $('alert-title').value = ''; $('alert-origin').value = ''; $('alert-detail').value = ''; }
+  loadAlerts();
+});
 
 // ---------- dispositivos ----------
 async function loadDevices() {

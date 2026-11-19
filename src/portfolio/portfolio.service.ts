@@ -4,7 +4,7 @@ import { mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
-import { GalleryItem } from '../images/images.service';
+import { GalleryItem } from './gallery';
 
 /** Un caso del portafolio: un trabajo real de Javier, contado como problema, lo que hizo y resultado. */
 export interface Case {
@@ -22,7 +22,7 @@ const plain = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g
 /** En el prompt van como mucho estos casos (los mas recientes); el resto se puede pedir con la herramienta. */
 const PROMPT_CASES = 12;
 /** Palabras que no sirven para buscar un caso (estan en casi todos los titulos). */
-const STOP = new Set(['para', 'una', 'uno', 'unos', 'unas', 'con', 'los', 'las', 'del', 'por', 'que', 'caso', 'casos', 'proyecto', 'proyectos', 'trabajo', 'trabajos', 'javier', 'cliente', 'the']);
+const STOP = new Set(['para', 'una', 'uno', 'unos', 'unas', 'con', 'los', 'las', 'del', 'por', 'que', 'caso', 'casos', 'proyecto', 'proyectos', 'trabajo', 'trabajos', 'camilo', 'guardian', 'cliente', 'the']);
 
 /**
  * Portafolio de Javier (pedido el 2026-11-18): hasta ahora el avatar solo conocia servicios genericos. Los casos se cargan
@@ -117,7 +117,7 @@ export class PortfolioService implements OnModuleInit {
   describe(c: Case, max = 700): string {
     const part = (label: string, v: string) => (v ? ` ${label}: ${v.slice(0, max)}${/[.!?]$/.test(v.slice(0, max)) ? '' : '.'}` : '');
     return `"${c.title}"${c.sector ? ` (${c.sector})` : ''}.${c.client ? ` Cliente: ${c.client}.` : ' Cliente: no se nombra.'}` +
-      part('Problema', c.problem) + part('Lo que hizo Javier', c.solution) + part('Resultado', c.result) + part('Tecnología', c.tech);
+      part('Problema', c.problem) + part('Lo que hizo Camilo', c.solution) + part('Resultado', c.result) + part('Tecnología', c.tech);
   }
 
   /** Elementos de galeria de los casos que tienen foto. */
@@ -131,10 +131,10 @@ export class PortfolioService implements OnModuleInit {
     if (!cases.length) return '';
     return `
 
-PORTAFOLIO: estos son trabajos REALES de Javier. Son los únicos casos que puedes contar: no inventes otros, ni clientes, ni cifras que no estén aquí.
+PORTAFOLIO: estos son trabajos REALES de Camilo. Son los únicos casos que puedes contar: no inventes otros, ni clientes, ni cifras que no estén aquí.
 ${cases.slice(0, PROMPT_CASES).map((c, i) => `${i + 1}. ${this.describe(c, 260)}`).join('\n')}${cases.length > PROMPT_CASES ? `\n(Hay ${cases.length - PROMPT_CASES} casos más; búscalos con la herramienta portafolio.)` : ''}
-- Cuando la persona cuente qué negocio tiene o qué necesita, o pregunte qué ha hecho Javier, cuéntale en dos o tres frases el caso que más se parezca: el problema, lo que hizo Javier y el resultado. Uno solo, no la lista.
+- Cuando la persona cuente qué negocio tiene o qué necesita, o pregunte qué ha hecho Camilo, cuéntale en dos o tres frases el caso que más se parezca: el problema, lo que hizo Camilo y el resultado. Uno solo, no la lista.
 - Si el caso dice "Cliente: no se nombra", no digas ni adivines quién es el cliente; di "un cliente" o el sector.
-- Si ningún caso se parece, dilo con honestidad y cuenta el más cercano sin exagerar el parecido.${screen ? '\n- Al contar un caso, llama a portafolio con su título: si tiene foto, se muestra en pantalla.' : ''}`;
+- Si ningún caso se parece, dilo con honestidad y cuenta el más cercano sin exagerar el parecido.${screen ? '\n- Al contar un caso, llama a portafolio con su título: si tiene foto, se muestra en pantalla (en grande; tú quedas pequeño en una esquina). Con galeria cambias la foto ("la dos", "la siguiente") o las quitas.' : ''}`;
   }
 }

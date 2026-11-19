@@ -172,33 +172,6 @@ export function createBackdrop(canvas) {
       ctx.fillStyle = g; ctx.fillRect(i * bw + bw * 0.14, H - h, bw * 0.72, h);
     }
   };
-  // Ping-pong que se juega solo. La paleta derecha (naranja) es la del avatar. La pelota queda en `ball` para que la siga con la mirada.
-  const pong = { x: 0.5, y: 0.5, vx: 0.012, vy: 0.008, l: 0.5, r: 0.5, sl: 0, sr: 0, wait: 0, errL: 0, errR: 0 };
-  let onScore = null;
-  const serve = (dir) => { pong.x = 0.5; pong.y = 0.3 + Math.random() * 0.4; pong.vx = dir * 0.013; pong.vy = (Math.random() - 0.5) * 0.02; pong.wait = 14; pong.errL = (Math.random() - 0.5) * 0.4; pong.errR = (Math.random() - 0.5) * 0.4; };
-  draw.pong = () => {
-    const ph = 0.2, px = 0.035;
-    if (pong.wait > 0) pong.wait--;
-    else {
-      pong.x += pong.vx; pong.y += pong.vy;
-      if (pong.y < 0.03 || pong.y > 0.97) { pong.vy = -pong.vy; pong.y = Math.max(0.03, Math.min(0.97, pong.y)); }
-      // Cada paleta persigue la pelota con un error que cambia en cada saque: asi a veces falla.
-      const chase = (cur, err, coming) => Math.max(ph / 2, Math.min(1 - ph / 2, cur + Math.max(-0.017, Math.min(0.017, (coming ? pong.y + err : 0.5) - cur))));
-      pong.l = chase(pong.l, pong.errL, pong.vx < 0); pong.r = chase(pong.r, pong.errR, pong.vx > 0);
-      const hit = (pad) => Math.abs(pong.y - pad) < ph / 2 + 0.02;
-      if (pong.vx < 0 && pong.x < px + 0.012) { if (hit(pong.l)) { pong.vx = Math.min(0.024, -pong.vx * 1.06); pong.vy += (pong.y - pong.l) * 0.06; pong.errR = (Math.random() - 0.5) * 0.4; } else if (pong.x < 0) { pong.sr++; onScore?.('avatar', pong.sr, pong.sl); serve(1); } }
-      if (pong.vx > 0 && pong.x > 1 - px - 0.012) { if (hit(pong.r)) { pong.vx = Math.max(-0.024, -pong.vx * 1.06); pong.vy += (pong.y - pong.r) * 0.06; pong.errL = (Math.random() - 0.5) * 0.4; } else if (pong.x > 1) { pong.sl++; onScore?.('rival', pong.sr, pong.sl); serve(-1); } }
-      if (pong.sl >= 7 || pong.sr >= 7) { pong.sl = 0; pong.sr = 0; }
-    }
-    ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = size * 0.2; ctx.setLineDash([size, size]); ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke(); ctx.setLineDash([]);
-    ctx.font = `700 ${size * 4}px ui-monospace, Menlo, monospace`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(String(pong.sl), W * 0.2, size * 6); ctx.fillStyle = 'rgba(255,150,90,0.75)'; ctx.fillText(String(pong.sr), W * 0.8, size * 6); ctx.textAlign = 'start';
-    const pw = size * 0.8;
-    ctx.fillStyle = '#e8ecf5'; ctx.fillRect(px * W - pw, (pong.l - ph / 2) * H, pw, ph * H);
-    ctx.fillStyle = '#ff7a59'; ctx.fillRect((1 - px) * W, (pong.r - ph / 2) * H, pw, ph * H);
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pong.x * W, pong.y * H, size * 0.75, 0, 6.283); ctx.fill();
-  };
   window.addEventListener('resize', () => { if (current) resize(); });
   return {
     show(name) {
@@ -209,8 +182,5 @@ export function createBackdrop(canvas) {
       else setTimeout(() => { if (!current) { clearInterval(timer); timer = null; } }, 1400); // sigue animando durante el fundido
     },
     get current() { return current; },
-    /** Pelota del ping-pong en coordenadas de pantalla (-1..1) y aviso de cada punto: fn('avatar' | 'rival'). */
-    get ball() { return { x: pong.x * 2 - 1, y: 1 - pong.y * 2 }; },
-    set onScore(fn) { onScore = fn; },
   };
 }

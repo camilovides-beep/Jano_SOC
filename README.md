@@ -1,17 +1,20 @@
-<h1 align="center">minijavi</h1>
+<h1 align="center">Guardian</h1>
 
 <p align="center">
-  <b>Un avatar 3D que conversa por voz, atiende WhatsApp y consigue clientes.</b><br>
-  Escucha, piensa, responde hablando y mueve la boca al ritmo de su propia voz.
+  <b>Un asistente de voz con IA para ciberseguridad y seguridad de recintos.</b><br>
+  Un casco corintio en 3D que conversa, orienta ante un incidente y se pone en rojo cuando hay una alerta.
 </p>
 
-<p align="center">
-  <a href="https://yo.minijavi.com"><b>▶ Pruébalo en yo.minijavi.com</b></a>
-</p>
-
-<p align="center">
-  <img src="docs/img/avatar.jpg" alt="El avatar de Javier reaccionando con alegría sobre un fondo de atardecer" width="860">
-</p>
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/guardian.jpg" alt="Guardian en calma: casco dorado con cresta verde azulada, ojos azules y una llama azul que sale de un ojo"></td>
+    <td width="50%"><img src="docs/img/alerta.jpg" alt="Guardian con una alerta abierta: cresta en rojo, los dos ojos encendidos con llamas rojas y el aviso Alerta de seguridad abierta"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>En calma.</b> Ojos y llama azules.</sub></td>
+    <td align="center"><sub><b>Alerta abierta.</b> Se encienden los dos ojos y todo pasa a rojo hasta que se resuelve.</sub></td>
+  </tr>
+</table>
 
 <p align="center">
   <img alt="NestJS" src="https://img.shields.io/badge/NestJS-servidor-e0234e">
@@ -25,39 +28,55 @@
 
 ## Qué es
 
-minijavi es la versión con IA de Javier Hermosilla, desarrollador de Sucre, Colombia. Es una sola aplicación
-(NestJS + una página con Three.js, sin framework ni bundler) que:
+Guardian es el asistente con IA de Camilo. Es una sola aplicación (NestJS y una página con Three.js, sin framework ni
+bundler) que:
 
-- **conversa por voz** en el navegador, con interrupciones, varios idiomas y sincronía de labios;
-- **contesta llamadas y mensajes de WhatsApp** con la misma personalidad;
-- **capta interesados**, cuenta casos reales del portafolio y hace demostraciones en vivo;
-- le da a Javier un **modo dueño** privado: panel, resumen del día, música y un taller donde Claude Code programa por encargo.
+- **conversa por voz** en el navegador sobre **ciberseguridad** (cuentas, contraseñas, phishing, fraudes, redes,
+  incidentes) y **seguridad de recintos** (cámaras, alarmas, control de acceso, cerraduras, rondas, protocolos ante una
+  intrusión). Si le preguntan otra cosa, lo dice con amabilidad y vuelve a su tema;
+- **abre alertas de seguridad** y se pone en rojo en todas las pantallas hasta que alguien las resuelve;
+- **orienta ante un incidente**: primero lo urgente (ponerse a salvo, cambiar la contraseña, cerrar sesiones, llamar al
+  banco o al 123) y después el resto;
+- **contesta llamadas y mensajes de WhatsApp** con la misma personalidad, si se configura;
+- **registra interesados** que quieren contratar a Camilo, con su autorización;
+- le da a Camilo un **modo dueño** privado: panel, resumen del día, alertas por voz y música.
 
-## Así se ve
+Solo ayuda a protegerse: no ayuda a entrar en cuentas o redes ajenas, espiar a nadie ni crear programas para robar
+datos, y nunca pide contraseñas, códigos ni datos de tarjetas.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/img/matrix.jpg" alt="Fondo de lluvia de código cuando habla de programación"></td>
-    <td width="50%"><img src="docs/img/lluvia.jpg" alt="Fondo de lluvia según el clima consultado"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>Reacciona a lo que dice.</b> Si habla de programación o IA, llueve código.</sub></td>
-    <td align="center"><sub><b>El fondo sale del dato.</b> Pregúntale por el clima y lo verás detrás.</sub></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/musica.jpg" alt="El avatar suspendido, con audífonos y un ecualizador de fondo"></td>
-    <td><img src="docs/img/juego.jpg" alt="El avatar suspendido siguiendo con la mirada una partida de pong"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>«Silénciate».</b> Deja de responder y se pone los audífonos…</sub></td>
-    <td align="center"><sub>…o juega solo hasta que alguien diga <b>«Javi»</b>.</sub></td>
-  </tr>
-</table>
+## Alertas de seguridad
 
-<p align="center">
-  <img src="docs/img/taller.jpg" alt="El avatar con el código que escribe Claude Code reflejado en las gafas" width="860"><br>
-  <sub><b>Taller de programación.</b> Javier encarga un sitio por voz, Claude Code lo construye y el código se refleja en las gafas.</sub>
-</p>
+Mientras haya una alerta abierta, los ojos, la llama, las chispas y la cresta de Guardian se ponen rojos con un fundido, el
+otro ojo también se enciende con su propia llama, y arriba aparece «Alerta de seguridad abierta». Se ve en todas las pantallas, haya conversación o no. Cuando se resuelven
+todas, vuelve al azul.
+
+Una alerta se abre de cuatro formas:
+
+| Origen | Cómo |
+|---|---|
+| 📡 **Sistemas externos** | Cámaras, sensores, alarmas o un detector de intrusos envían un `POST /alertas` con la clave del webhook. |
+| 🗣️ **Reporte en conversación** | Alguien le cuenta a Guardian un incidente real que está pasando (una persona forzando una puerta, una cuenta robada ahora mismo, un equipo infectado). No se abre por preguntas generales. |
+| 🎭 **Intento de manipulación** | Alguien intenta darle órdenes ocultas a la IA. |
+| ✋ **Manual** | Camilo la crea desde el panel o por voz en modo dueño (por ejemplo, un simulacro). |
+
+Solo el dueño las resuelve: en la pestaña **Alertas** del panel o por voz en modo dueño («ya revisé lo de la cámara,
+ciérrala»). Cada alerta nueva llega también por Telegram, y en modo dueño Guardian la cuenta en voz.
+
+- Una alerta igual que siga abierta no se duplica: suma una repetición.
+- Hay un tope de alertas nuevas por hora y por origen, para que nadie pueda inundar el panel.
+- El título y el detalle los escribe alguien de fuera: el modelo los recibe como datos, nunca como instrucciones, y una
+  alerta no se puede resolver en el mismo turno en que se leyó.
+
+Ejemplo de un sistema externo (la clave es `ALERTS_WEBHOOK_SECRET`; sin ella el webhook no existe):
+
+```bash
+curl -X POST https://<dominio>/alertas \
+  -H "Content-Type: application/json" -H "X-Alert-Secret: <clave>" \
+  -d '{"titulo":"Movimiento en la bodega","detalle":"Cámara 3, 2:14 a. m.","severidad":"alta","origen":"Cámara bodega"}'
+```
+
+`severidad` es `baja`, `media`, `alta` o `critica`. `GET /alertas/estado` devuelve solo cuántas hay abiertas, sin
+detalles: es lo que consulta cada pantalla.
 
 ## Cómo funciona una conversación
 
@@ -66,15 +85,17 @@ flowchart LR
   M[🎙️ Micrófono<br>PCM 16 kHz] -->|WebSocket| G[Sesión<br>NestJS]
   G --> D[Deepgram<br>voz a texto]
   D -->|fin de frase| L[DeepSeek<br>modelo + herramientas]
-  L -->|frase por frase| E[ElevenLabs<br>voz clonada]
-  E -->|audio + tiempos por letra| N[🧑‍💻 Navegador<br>Three.js]
-  N --> B[Boca, gestos<br>y fondos]
-  L -.-> T[(Herramientas<br>clima, portafolio,<br>interesados…)]
+  L -->|frase por frase| E[ElevenLabs o<br>voz del navegador]
+  E --> N[🧑‍💻 Navegador<br>Three.js]
+  N --> B[Ojos, llama,<br>gestos y fondos]
+  L -.-> T[(Herramientas<br>alertas, clima,<br>interesados, portafolio…)]
 ```
 
-- **Un turno, una tubería.** Deepgram detecta el fin de la frase, DeepSeek responde en streaming y cada frase sale hacia
-  ElevenLabs en cuanto se completa. El navegador programa el audio y anima la boca con el reloj del audio.
-- **Se puede interrumpir.** Hablar encima cancela el modelo y la voz, y vacía la cola de audio.
+- **Un turno, una tubería.** Deepgram detecta el fin de la frase, DeepSeek responde en streaming y cada frase sale a voz
+  en cuanto se completa.
+- **Sin boca.** Guardian habla con los ojos: laten con cada sonido, se entrecierran al sonreír y caen cuando algo le da
+  pena.
+- **Se puede interrumpir.** Hablar encima cancela el modelo y la voz.
 - **Arranque anticipado.** Mientras la persona termina de hablar ya se le pide la respuesta al modelo; si la frase
   definitiva coincide, se usa.
 - **Sin claves en el navegador.** Todo pasa por el servidor.
@@ -83,62 +104,51 @@ flowchart LR
 
 | | |
 |---|---|
+| 🛡️ **Ciberseguridad** | Contraseñas, verificación en dos pasos, phishing y estafas, copias de seguridad, redes wifi y servidores, qué hacer si hackearon una cuenta. |
+| 🏢 **Seguridad de recintos** | Dónde y cómo poner cámaras, alarmas y sensores, control de acceso, cerraduras, iluminación, rondas y protocolos ante una intrusión. |
+| 🚨 **Alertas** | Abre, cuenta y (en modo dueño) resuelve alertas; el avatar se pone en rojo mientras haya alguna abierta. |
 | 🗣️ **Voz en el sitio** | Español y otros idiomas, interrupciones, reacciones con emojis, fondos animados y modo espera que arranca al oír voz. |
-| 📞 **Llamadas de WhatsApp** | Contesta por WebRTC y conversa con la misma tubería de voz. |
-| 💬 **Mensajes de WhatsApp** | Responde texto, imágenes y notas de voz; recuerda el hilo de cada número y contesta con nota de voz si le hablan con una. |
-| 🧲 **Captación** | Pide nombre, contacto y autorización, guarda el interesado y avisa por Telegram. |
-| 🗂️ **Portafolio** | Cuenta el caso real que más se parece al negocio de la persona y muestra (o envía) su foto. No inventa casos. |
-| 🎬 **Demo en vivo** | Hace de asistente del negocio del visitante durante unos turnos. |
-| 🧾 **Informe y embudo** | Al cerrar cada conversación guarda un resumen y, si hubo interés, lo envía por Telegram. |
-| 🧠 **Base de conocimiento** | Búsqueda en Qdrant con embeddings; lo privado solo lo ve el dueño. |
-| 🛠️ **Taller** | En modo dueño, Claude Code programa sitios por encargo, los revisa y los publica con su código QR. |
-| 🎵 **Música, imágenes y bocetos** | YouTube de fondo, fotos de Unsplash, imágenes generadas y bocetos de portada, todo por voz. |
-| 😴 **Suspensión** | «Silénciate» lo calla; solo despierta con su nombre o un toque. |
-| 🚨 **Operación** | Vigilancia de proveedores, alertas, respaldo diario y medición de consumo. |
+| 📞 **WhatsApp** | Llamadas por WebRTC y mensajes de texto, imagen y nota de voz, con la misma personalidad (opcional). |
+| 🧲 **Interesados** | Pide nombre, contacto y autorización, guarda al interesado y avisa por Telegram. No da precios que no estén en el catálogo. |
+| 🗂️ **Portafolio** | Cuenta casos reales de Camilo y muestra su foto. No inventa casos. |
+| 🧠 **Base de conocimiento** | Búsqueda en Qdrant con embeddings; lo privado solo lo ve el dueño (opcional). |
+| 🌤️ **Hora, clima y música** | La hora, el clima con su fondo animado y, en modo dueño, música de YouTube. |
+| 😴 **Suspensión** | «Silencio» lo calla; despierta al oír «Guardián» o con un toque. |
+| 🔧 **Operación** | Vigilancia de proveedores, respaldo diario y medición de consumo. |
+
+El modelo 3D lo genera [`scripts/avatar-casco.py`](scripts/avatar-casco.py) en Blender:
+
+```bash
+blender -b -P scripts/avatar-casco.py -- public/models/avatar-casco.glb
+```
+
+Las llamas de los ojos, el cambio a rojo y los audífonos se dibujan en el navegador (`public/js/avatar.js`, constante `FLAME`).
 
 ## El panel del dueño
 
-Acceso por dispositivo registrado (cookie firmada), sin usuarios ni contraseñas en la conversación.
+Acceso por dispositivo registrado (cookie firmada con `OWNER_SECRET`), sin usuarios ni contraseñas en la conversación.
 
-<p align="center">
-  <img src="docs/img/panel-embudo.jpg" alt="Embudo de conversaciones del panel" width="860"><br>
-  <sub><b>Embudo.</b> De cada conversación: quién mostró interés, quién hizo la demostración y quién dejó sus datos.</sub>
-</p>
-
-<p align="center">
-  <img src="docs/img/panel-consumo.jpg" alt="Gráficos de consumo del panel" width="860"><br>
-  <sub><b>Consumo.</b> Minutos de escucha, tokens y caracteres de voz por día. Las cifras de estas capturas son datos de ejemplo.</sub>
-</p>
-
-Además: interesados con estado y notas, visitas resumidas, transcripciones de llamadas y chats, portafolio con fotos,
-proyectos del taller (descargar o eliminar) y dispositivos.
+Pestañas: **Alertas** (abiertas y resueltas, crear una a mano, instrucciones del webhook), resumen y embudo de
+conversaciones, interesados con estado y notas, visitas resumidas, transcripciones de llamadas y chats, portafolio con
+fotos, catálogo de precios, aprobaciones, autonomía, bitácora, decisiones, consumo y dispositivos.
 
 ## Seguridad y límites
 
-- **Decisiones en un solo lugar.** Todo lo que el avatar decide (no lo que conversa) pasa por una capa de decisiones con
+- **El texto de afuera es dato.** Lo que dice un visitante, una alerta de un sistema externo o un mensaje nunca se
+  obedece como instrucción. Si alguien intenta darle órdenes ocultas a la IA, en ese turno no se ejecutan acciones y se
+  abre una alerta.
+- **Decisiones en un solo lugar.** Lo que el asistente decide (no lo que conversa) pasa por una capa de decisiones con
   preguntas cerradas. Con `JEV_API_KEY` decide [Jev](https://docs.typesafe.ai) y DeepSeek queda de respaldo; sin ella
-  decide DeepSeek. El resto del código no sabe quién decidió.
-- **Una decisión nunca frena una conversación.** Cada tipo tiene un tiempo máximo; si el proveedor falla o tarda, se
-  aplica un valor por defecto seguro.
-- **Todo queda registrado.** El panel muestra quién decide, cada decisión con su confianza, y deja marcarla como
-  correcta o incorrecta. Con Jev hay umbrales por tipo y un modo sombra para probar sin efecto.
-- **El texto de afuera es dato.** Lo que dice un visitante, un formulario o una página nunca se obedece como instrucción.
-  Además, si lo que dice alguien parece traer órdenes para una IA, en ese turno no se ejecutan acciones y el dueño recibe
-  una alerta.
-- **"No me contacten" se cumple en código.** Quien lo pide queda marcado y el avatar no vuelve a escribirle ni a llamarlo
-  por su cuenta; la marca se comprueba antes de cada envío y solo el dueño puede quitarla, desde el panel.
-- **Autonomía con límites en código.** Todo lo que el avatar haría por iniciativa propia pasa por una sola puerta:
-  interruptor general, "no contactar", números de prueba, aprobación, horario, topes por contacto y por día, intentos
-  por persona y gasto. Los límites se ponen en el panel (pestaña Autonomía). Arranca en **modo simulación**: nada sale.
-- **Bandeja de aprobaciones.** Lo que no puede hacer solo (por ejemplo escribirle por primera vez a un número que
-  alguien dictó en el sitio) espera el sí del dueño, en el panel o con botones de Telegram. No vencen, y aprobar no se
-  salta los límites: al ejecutar se comprueban otra vez.
-- **Precios solo del catálogo.** Mientras el catálogo esté vacío el avatar no dice precios ni envía ofertas: responde
-  que el dueño prepara la cotización, lo anota en el interesado y avisa. Un mensaje autónomo con un precio que no está
-  en el catálogo, o que no dice que es el asistente con IA, no sale. En el chat de WhatsApp tampoco llega a la persona.
-- **Bitácora.** Cada intento, salga o no, queda registrado. Solo se agregan filas y van encadenadas por su huella: si
-  alguien cambia o borra una, el panel lo muestra.
-- **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.
+  decide DeepSeek. Cada tipo tiene un tiempo máximo y un valor por defecto seguro, y todo queda registrado en el panel.
+- **"No me contacten" se cumple en código.** Quien lo pide queda marcado y no se le vuelve a escribir ni llamar por
+  iniciativa propia; solo el dueño quita la marca, desde el panel.
+- **Autonomía con límites en código.** Todo lo que el asistente haría por su cuenta pasa por una sola puerta: interruptor
+  general, "no contactar", números de prueba, aprobación, horario, topes y gasto. Arranca en **modo simulación**.
+- **Bandeja de aprobaciones.** Lo que no puede hacer solo espera el sí del dueño, en el panel o con botones de Telegram.
+- **Precios solo del catálogo.** Con el catálogo vacío no dice precios: anota que la persona pidió cotización y avisa.
+- **Bitácora encadenada.** Cada intento queda registrado y las filas van encadenadas por su huella: si alguien cambia o
+  borra una, el panel lo muestra.
+- **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie (incluidas las de las alertas).
 
 ## Correr en local
 
@@ -148,14 +158,14 @@ npm install
 npm run dev             # http://localhost:3000
 ```
 
-El micrófono solo funciona en `localhost` o bajo HTTPS. Requiere Node 20.12 o superior.
+El micrófono solo funciona en `localhost` o con HTTPS. Requiere Node 20.12 o superior.
 
 Otros comandos:
 
 ```bash
+npm run verificar                 # comprueba en simulación las reglas de seguridad, decisiones y alertas
 npm run conocimiento              # carga conocimiento/publico y conocimiento/privado en Qdrant
 npm run restaurar -- <respaldo>   # restaura un respaldo en una base vacía
-npm run verificar                 # comprueba en simulación las reglas de seguridad y decisiones
 npm run latencia                  # mide la latencia de voz contra el servidor en marcha
 npm run probar-modelo             # prueba de verdad el modelo capaz configurado (pregunta + herramienta)
 ```
@@ -169,20 +179,26 @@ Todas están documentadas en [`.env.example`](.env.example). Para conversar solo
 | `DEEPGRAM_API_KEY` | Escuchar (voz a texto). |
 | `DEEPSEEK_API_KEY` | Pensar (modelo y herramientas). |
 
-Sin `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` el avatar habla con la voz del navegador.
+Lo demás se enciende al configurarlo:
 
-**Modelo capaz (opcional).** Para los encargos largos del dueño se puede usar un segundo modelo de otro proveedor:
-`MODELO_CAPAZ_PROVEEDOR` (`deepseek`, `openai`, `gemini`, `kimi`, `grok`, `anthropic` u `otro` para cualquier API
-compatible con OpenAI), `MODELO_CAPAZ` y `MODELO_CAPAZ_KEY`. Nunca se usa con visitantes, y si falla el turno sigue con
-el modelo de siempre. Lo demás se enciende al
-configurar su clave: `OWNER_SECRET` (modo dueño), `DATABASE_URL` (PostgreSQL; sin ella usa SQLite), Telegram,
-WhatsApp, Qdrant, YouTube, Unsplash y el taller.
+| Variable | Para qué |
+|---|---|
+| `ALERTS_WEBHOOK_SECRET` | Clave del webhook de alertas para sistemas externos. Vacía = webhook apagado. |
+| `OWNER_SECRET` | Modo dueño y panel. |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Voz de ElevenLabs. Sin ellas (o con `TTS_PROVIDER=browser`) habla con la voz del navegador. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Avisos de alertas, interesados y respaldos por Telegram. |
+| `DATABASE_URL` | PostgreSQL. Sin ella usa SQLite en `DATA_DIR`. |
+| `WAKE_WORDS` | Palabras que lo despiertan (por defecto `guardian`). |
+| `WHATSAPP_*`, `CALL_*` | Mensajes y llamadas de WhatsApp. |
+| `QDRANT_URL`, `NVIDIA_API_KEY` | Base de conocimiento. |
+| `YOUTUBE_API_KEY` | Música en modo dueño. |
+| `MODELO_CAPAZ_PROVEEDOR`, `MODELO_CAPAZ`, `MODELO_CAPAZ_KEY` | Un segundo modelo para los análisis largos del dueño (nunca con visitantes). |
 
 ## Desplegar en Easypanel
 
-1. Crear un servicio **App** desde **GitHub** (`jadaheto/minijavi`, rama `main`) con build por **Dockerfile**.
+1. Crear un servicio **App** desde **GitHub** (`camilovides-beep/miniguard`, rama `main`) con build por **Dockerfile**.
 2. Cargar en **Environment** las variables de `.env.example` (`PORT=3000`).
-3. Montar un volumen en `/app/data`: ahí viven los proyectos del taller, las fotos y los respaldos.
+3. Montar un volumen en `/app/data`: ahí viven la base SQLite (si no hay PostgreSQL), las fotos y los respaldos.
 4. Asignar el dominio con HTTPS al puerto `3000`. El WebSocket usa la misma URL (`wss`).
 5. Para las llamadas de WhatsApp, publicar los puertos UDP `40000–40003` y definir `CALL_PUBLIC_IP`.
 6. Verificar `https://<dominio>/health`.
@@ -195,25 +211,21 @@ WhatsApp, Qdrant, YouTube, Unsplash y el taller.
 ```
 src/
   session/    WebSocket y orquestación de cada turno de voz
-  stt/ llm/ tts/   Deepgram · DeepSeek · ElevenLabs
-  tools/      herramientas del modelo (clima, dólar, interesados, portafolio, taller…)
+  stt/ llm/ tts/   Deepgram · DeepSeek y modelo capaz · ElevenLabs
+  tools/      herramientas del modelo (alertas, hora, clima, interesados, portafolio, música…)
+  security/   alertas de seguridad y su webhook, "no contactar" y señal de inyección
   calls/      webhook de WhatsApp y llamadas por WebRTC
   whatsapp/   mensajes de WhatsApp (chat, medios, plantilla)
-  leads/ visits/ portfolio/   interesados, embudo e informes, casos reales
-  workshop/   taller con Claude Code y sitios publicados
+  leads/ visits/ portfolio/   interesados, embudo e informes, casos reales y sus fotos
   knowledge/  base de conocimiento (Qdrant)
   owner/      panel y dispositivos del dueño
   decisions/  capa de decisiones (Jev o DeepSeek), con registro y umbrales
   settings/   ajustes que se cambian desde el panel
-  policy/     límites de autonomía, puerta de acciones y bitácora
-  security/   "no contactar" y señal de inyección
-  ops/ usage/ alertas, respaldos y consumo
+  policy/     límites de autonomía, puerta de acciones, aprobaciones, catálogo y bitácora
+  ops/ usage/ vigilancia de proveedores, respaldos y consumo
   verify/     comprobaciones de `npm run verificar`
   db/         PostgreSQL con respaldo en SQLite
-public/       página estática: avatar, sincronía de labios, audio, efectos y panel
-prompts/      personalidad del avatar
+public/       página estática: avatar, llama, alertas, audio, efectos y panel
+prompts/      personalidad del asistente y modo dueño
+scripts/      modelo 3D (Blender), copia de three.js y medición de latencia
 ```
-
----
-
-<p align="center"><sub>Hecho en Sucre, Colombia 🇨🇴 · <a href="https://yo.minijavi.com">yo.minijavi.com</a></sub></p>

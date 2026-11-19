@@ -1,10 +1,108 @@
 // Carga el GLB y anima todo lo que no es la boca: estados, parpadeo, mirada, cabeza y cejas.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 
-const PHONES = { x: 1.0, top: 1.04, earY: -0.05, z: -0.05 }; // proporciones de los audifonos respecto a la caja del modelo
+// Modelo: casco corintio con ojos de luz y una llama en un ojo (lo genera scripts/avatar-casco.py en Blender).
+const MODEL = '../models/avatar-casco.glb';
+const PHONES = { x: 1.08, top: 0.62, earY: -0.25, z: -0.1 }; // proporciones de los audifonos respecto a la caja del modelo (la cresta la agranda)
+
+// Ojo en llamas: una llama azul animada (shader) que nace en un ojo y sale hacia el lado, mas chispas que flotan.
+// Va en el mismo grupo que la cabeza, asi gira con ella. Medidas en unidades del modelo (el casco mide unos 2 de ancho).
+// angle: hacia donde apunta la llama, en grados desde la vertical hacia afuera (0 = arriba, 90 = de lado).
+// lean: cuanto se curva la punta (negativo = hacia arriba, como fuego que empuja el viento).
+// alertEye: el otro ojo, que se enciende con su propia llama (en espejo) solo mientras haya una alerta abierta.
+const FLAME = { eye: 'Eye_L', alertEye: 'Eye_R', width: 0.82, height: 1.35, base: 0.14, ahead: 0.17, angle: 80, lean: -0.45, embers: 60 };
+
+const FLAME_VERT = /* glsl */`
+varying vec2 vUv;
+void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+const FLAME_FRAG = /* glsl */`
+uniform float uTime, uPower, uBase, uLean, uAlert, uShow;
+varying vec2 vUv;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; } return v; }
+void main() {
+  float y = vUv.y, x = (vUv.x - 0.5) * 2.0, t = uTime;
+  // Envolvente: redonda alrededor del ojo y se afila hacia la punta (y = a lo largo de la llama), curvada segun uLean.
+  float wob = (fbm(vec2(x * 1.5, y * 2.0 - t * 1.4)) - 0.5) * 0.9 * y;
+  float lean = uLean * y * y + wob;
+  float w = y < uBase ? sqrt(max(0.0, 1.0 - pow((uBase - y) / uBase, 2.0))) : pow(max(0.0, 1.0 - (y - uBase) / (1.0 - uBase)), 0.9);
+  w *= 0.8 * uPower;
+  float env = 1.0 - smoothstep(w * 0.35, w, abs(x - lean));
+  // Fuego: ruido que sube; arriba se rompe en lenguas sueltas.
+  float f = fbm(vec2((x - lean) * 3.0, y * 3.8 - t * 3.2));
+  float fire = env * (f * 1.7 - y * 1.05 + 0.42);
+  float body = smoothstep(0.18, 0.42, fire), core = smoothstep(0.5, 0.85, fire);
+  body *= smoothstep(0.0, 0.08, y);
+  // Azul en calma; rojo mientras haya una alerta de seguridad abierta (uAlert 0..1, con fundido).
+  vec3 deep = mix(vec3(0.0, 0.12, 0.85), vec3(0.75, 0.0, 0.02), uAlert), mid = mix(vec3(0.05, 0.42, 1.0), vec3(1.0, 0.16, 0.04), uAlert), hot = mix(vec3(0.55, 0.85, 1.0), vec3(1.0, 0.72, 0.5), uAlert);
+  vec3 col = mix(deep, mid, smoothstep(0.1, 0.6, body));
+  col = mix(col, hot, core * clamp(1.2 - y * 1.5, 0.0, 1.0));
+  gl_FragColor = vec4(col, body * 0.92 * uShow);
+}`;
+
+/** Llama de un ojo. `side`: 1 = ojo izquierdo del casco (sale hacia la derecha de la pantalla), -1 = el otro, en espejo. */
+function createFlame(root, pivot, eyeName, side) {
+  const eye = root.getObjectByName(eyeName); if (!eye) return null;
+  root.updateMatrixWorld(true);
+  const at = eye.getWorldPosition(new THREE.Vector3());
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uPower: { value: 1 }, uBase: { value: FLAME.base }, uLean: { value: FLAME.lean * side }, uAlert: { value: 0 }, uShow: { value: 1 } },
+    vertexShader: FLAME_VERT, fragmentShader: FLAME_FRAG,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,   // mezcla normal: sobre el oro se ve azul, no blanco
+  });
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(FLAME.width, FLAME.height), mat);
+  // El plano se gira para que la llama apunte segun FLAME.angle; su base (uBase) queda justo sobre el ojo y va un poco
+  // por delante del casco.
+  const ang = THREE.MathUtils.degToRad(FLAME.angle), dir = new THREE.Vector2(Math.sin(ang) * side, Math.cos(ang));
+  const along = FLAME.height / 2 - FLAME.height * FLAME.base;
+  plane.position.set(at.x + dir.x * along, at.y + dir.y * along, at.z + FLAME.ahead); plane.rotation.z = -ang * side;
+  plane.renderOrder = 20; pivot.add(plane);
+
+  // Chispas: puntos que nacen a lo largo de la llama, salen en su direccion subiendo un poco y se apagan.
+  const N = FLAME.embers, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), life = new Float32Array(N), vel = [];
+  const spawn = (i, first) => {
+    const s = Math.random() * FLAME.height * (first ? 0.8 : 0.35), side = (Math.random() - 0.5) * FLAME.width * 0.35;
+    pos[i * 3] = at.x + dir.x * s + dir.y * side; pos[i * 3 + 1] = at.y + dir.y * s - dir.x * side;
+    pos[i * 3 + 2] = at.z + FLAME.ahead + (Math.random() - 0.5) * 0.15;
+    const sp = 0.3 + Math.random() * 0.45, up = 0.05 + Math.random() * 0.15;
+    vel[i] = [dir.x * sp, dir.y * sp + up]; life[i] = first ? Math.random() : 1;
+  };
+  for (let i = 0; i < N; i++) spawn(i, true);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const dot = document.createElement('canvas'); dot.width = dot.height = 32;
+  const g = dot.getContext('2d'), grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.4, 'rgba(255,255,255,0.5)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 32, 32);
+  const sparks = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.07, map: new THREE.CanvasTexture(dot), vertexColors: true,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sparks.renderOrder = 21; pivot.add(sparks);
+
+  return {
+    /** `show` (0..1): cuanto se ve; la llama del segundo ojo entra y sale con la alerta. */
+    update(dt, time, power, alert = 0, show = 1) {
+      plane.visible = sparks.visible = show > 0.01; if (!plane.visible) return;
+      mat.uniforms.uShow.value = show; mat.uniforms.uTime.value = time; mat.uniforms.uAlert.value = alert; mat.uniforms.uPower.value += (power - mat.uniforms.uPower.value) * Math.min(1, dt * 4);
+      for (let i = 0; i < N; i++) {
+        life[i] -= dt * (0.45 + (i % 5) * 0.08);
+        if (life[i] <= 0) spawn(i, false);
+        pos[i * 3] += vel[i][0] * dt; pos[i * 3 + 1] += vel[i][1] * dt;
+        const k = show * Math.max(0, Math.min(1, life[i] * 1.6)) * (0.6 + 0.4 * Math.sin(time * 9 + i)); // titila al apagarse
+        col[i * 3] = (0.3 + 0.7 * alert) * k; col[i * 3 + 1] = (0.75 - 0.6 * alert) * k; col[i * 3 + 2] = (1.0 - 0.92 * alert) * k;
+      }
+      geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true;
+    },
+  };
+}
 
 export async function createAvatar(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -13,12 +111,14 @@ export async function createAvatar(canvas) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(14, 1, 0.1, 100); // campo de vision muy angosto: casi sin perspectiva, como el Memoji
 
-  // Luz casi frontal y pareja; el sombreado fino ya viene en el color por vertice del modelo.
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.55));
-  const key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(-1.2, 1.6, 4); scene.add(key);
-  const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(2, 1.5, -3); scene.add(rim);
+  // Luz casi frontal y pareja, mas un entorno de estudio para que el oro y el acero del casco tengan reflejos.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(-1.2, 1.6, 4); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.6); rim.position.set(2, 1.5, -3); scene.add(rim);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.8; pmrem.dispose();
 
-  const gltf = await new GLTFLoader().loadAsync(new URL('../models/avatar-javier.glb', import.meta.url).href);
+  const gltf = await new GLTFLoader().loadAsync(new URL(MODEL, import.meta.url).href);
   const root = gltf.scene; const pivot = new THREE.Group(); pivot.add(root); scene.add(pivot);
 
   // Los morph targets estan repartidos en varias mallas: se indexa cada nombre con todas las mallas que lo tienen.
@@ -36,9 +136,26 @@ export async function createAvatar(canvas) {
   const setMorph = (name, value) => { const list = morphs.get(name); if (list) for (const m of list) m.mesh.morphTargetInfluences[m.index] = value; };
   const eyeL = root.getObjectByName('Eye_L'), eyeR = root.getObjectByName('Eye_R');
 
-  // Reflejo de pantalla en las gafas: mientras Claude Code programa, sus lineas de codigo suben por los cristales.
+  // Alerta de seguridad: los ojos (luz, nucleo y halo) y la cresta pasan a rojo con un fundido, y vuelven al resolverla.
+  // Se guarda el color original de cada material y se mezcla con su version roja segun alertK (0 = azul, 1 = rojo).
+  const ALERT_RED = { Luz: 0xff1408, Nucleo: 0xffa898, Halo: 0xff1a06, CrestaA: 0x4a0306, CrestaB: 0x6e060a, CrestaC: 0x94100e };
+  const tinted = []; // { m, glow (cambia la emision, no el color base), from, to }
+  root.traverse((o) => {
+    for (const m of o.isMesh ? [o.material].flat() : []) {
+      if (!(m?.name in ALERT_RED) || tinted.some((t) => t.m === m)) continue;
+      const glow = !!m.emissive && m.emissive.getHex() !== 0;
+      tinted.push({ m, glow, from: (glow ? m.emissive : m.color).clone(), to: new THREE.Color(ALERT_RED[m.name]) });
+    }
+  });
+  let alertOn = false, alertK = 0, alertShown = -1;
+  function paintAlert() {
+    for (const t of tinted) (t.glow ? t.m.emissive : t.m.color).lerpColors(t.from, t.to, alertK);
+    alertShown = alertK;
+  }
+
+  // Reflejo de pantalla en el cristal de los ojos: cuando "lee" en suspension, unas lineas de codigo suben por el cristal.
   // El cristal del modelo no trae coordenadas de textura: se proyectan aqui, cada lente por separado.
-  const lens = { k: 0, on: false, lines: [], scroll: 0, mat: null, tex: null, ctx: null, at: 0 };
+  const lens = { k: 0, lines: [], scroll: 0, mat: null, tex: null, ctx: null, at: 0 };
   if (lensMesh) {
     const geo = lensMesh.geometry.clone(), pos = geo.attributes.position, uv = new Float32Array(pos.count * 2);
     const b = [[Infinity, -Infinity], [Infinity, -Infinity]]; let y0 = Infinity, y1 = -Infinity;
@@ -51,9 +168,10 @@ export async function createAvatar(canvas) {
     const glow = new THREE.Mesh(geo, lens.mat); glow.renderOrder = 11; glow.visible = false; glow.position.z = 0.002;
     lensMesh.add(glow); lens.mesh = glow;
   }
+  const flame = createFlame(root, pivot, FLAME.eye, 1), flame2 = createFlame(root, pivot, FLAME.alertEye, -1);
   // Audifonos para cuando escucha musica en suspension: diadema y dos copas, hechos aqui (el modelo no los trae).
   const phones = new THREE.Group(); phones.visible = false;
-  // Actividades del modo suspension: dormir, leer, musica, juego (en el juego solo sigue la pelota con la mirada).
+  // Actividades del modo suspension: dormir, leer y musica.
   let act = null, actT = 0, sleepK = 0, musicK = 0, readK = 0;
   const LENS_COLORS = ['#8fe3ff', '#b6ffb0', '#ffe08a', '#d7c2ff', '#ffffff'];
   function drawLens(dt) {
@@ -189,10 +307,17 @@ export async function createAvatar(canvas) {
     smile += (smileGoal - smile) * (1 - Math.exp(-dt / 0.3)); setMorph('mouthSmile', Math.max(smile * (1 - exSad * k), exSmile * k, musicK * 0.5));
 
     if (lens.mat) { // el reflejo entra y sale con un fundido
-      lens.k += ((lens.on || readK > 0.5 ? 1 : 0) - lens.k) * (1 - Math.exp(-dt / 0.5));
+      lens.k += ((readK > 0.5 ? 1 : 0) - lens.k) * (1 - Math.exp(-dt / 0.5));
       lens.mesh.visible = lens.k > 0.01; lens.mat.opacity = lens.k * (0.62 + Math.sin(clock * 7) * 0.04);
       if (lens.mesh.visible && clock - lens.at > 1 / 15) { drawLens(clock - lens.at); lens.at = clock; }
     }
+    // Alerta: fundido de ~0,6 s hacia el rojo (o de vuelta al azul); solo se repintan los materiales mientras cambia.
+    alertK += ((alertOn ? 1 : 0) - alertK) * (1 - Math.exp(-dt / 0.25));
+    if (Math.abs(alertK - alertShown) > 0.002) paintAlert();
+    // La llama crece un poco al hablar (y con una alerta abierta) y se apaga casi del todo al dormir.
+    const firePower = (speaking ? 1.12 : 1) * (1 + 0.15 * alertK) * (1 - 0.45 * sleepK);
+    flame?.update(dt, clock, firePower, alertK);
+    flame2?.update(dt, clock + 7.3, firePower, alertK, alertK); // el otro ojo se enciende solo con la alerta (desfasado para que no sea un calco)
     renderer.render(scene, camera);
   }
 
@@ -201,13 +326,9 @@ export async function createAvatar(canvas) {
     setState(s) { if (s !== state) { state = s; gazeAt = 0; } },
     raiseBrows() { browPulse = 1; },
     react(name) { expr.name = name; expr.t = 0; },
-    /** Reflejo de codigo en las gafas. `lines`: lo que Claude Code esta escribiendo (si no llega nada, se conserva lo anterior). */
-    setWork(active, lines) {
-      lens.on = !!active && !!lens.mat;
-      if (lines?.length) lens.lines = lines.map((l) => String(l).replace(/\t/g, '  ').slice(0, 38));
-      else if (active && !lens.lines.length) lens.lines = ['$ claude -p "..."', 'const avatar = await taller();', 'for (const paso of plan) {', '  await paso.run();', '}', '// trabajando...'];
-    },
-    /** Actividad del modo suspension: 'dormir' | 'leer' | 'musica' | 'juego' | null. */
+    /** Alerta de seguridad abierta (true) o resuelta (false): ojos, llama y cresta en rojo o en azul. */
+    setAlert(on) { alertOn = !!on; },
+    /** Actividad del modo suspension: 'dormir' | 'leer' | 'musica' | null. */
     setActivity(name) {
       if (name !== act) { act = name; actT = 0; }
       if (name === 'leer' && !lens.lines.length) lens.lines = ['function descansar() {', '  while (!meLlaman) {', '    leer(unPoco);', '  }', '}', '// no molestar', 'const idea = pensar();'];

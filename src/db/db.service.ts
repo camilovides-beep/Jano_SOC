@@ -83,6 +83,13 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS wa_messages_phone ON wa_messages (phone, id)`,
   `CREATE TABLE IF NOT EXISTS wa_chats (phone TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', last_at TEXT NOT NULL DEFAULT '', open_at TEXT NOT NULL DEFAULT '',
      turns INTEGER NOT NULL DEFAULT 0, leads TEXT NOT NULL DEFAULT '', cases INTEGER NOT NULL DEFAULT 0)`,
+  // Alertas de seguridad: mientras haya alguna 'abierta' el avatar se pone rojo. source = sistema | conversacion | manipulacion |
+  // manual; count = cuantas veces llego la misma mientras seguia abierta; solo el dueño la pasa a 'resuelta'.
+  `CREATE TABLE IF NOT EXISTS security_alerts (
+     id {{ID}}, business TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, source TEXT NOT NULL, origin TEXT NOT NULL DEFAULT '', severity TEXT NOT NULL DEFAULT 'media',
+     title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'abierta',
+     resolved_at TEXT NOT NULL DEFAULT '', resolved_by TEXT NOT NULL DEFAULT '', resolution TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS security_alerts_status ON security_alerts (business, status)`,
   `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
   `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
   `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,
