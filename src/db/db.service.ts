@@ -52,6 +52,11 @@ const SCHEMA = [
      backup INTEGER NOT NULL DEFAULT 0, defaulted INTEGER NOT NULL DEFAULT 0, shadow INTEGER NOT NULL DEFAULT 0, agree INTEGER, ms INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
      detail TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT '', mark TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS decisions_at ON decisions (business, at)`,
+  // Contactos que pidieron no ser contactados. contact = telefono con indicativo (solo digitos) o correo en minusculas.
+  // lifted_at '' = marca vigente; solo Javier la quita, desde el panel.
+  `CREATE TABLE IF NOT EXISTS optouts (id {{ID}}, business TEXT NOT NULL, contact TEXT NOT NULL, at {{TS}} NOT NULL, source TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '',
+     marked_by TEXT NOT NULL DEFAULT 'avatar', decision_id INTEGER, lifted_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS optouts_contact ON optouts (business, contact)`,
   // Imagenes generadas con IA: el archivo vive en DATA_DIR/imagenes; aqui queda con que descripcion se pidio.
   `CREATE TABLE IF NOT EXISTS generated_images (id {{ID}}, at {{TS}} NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0)`,
   // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.

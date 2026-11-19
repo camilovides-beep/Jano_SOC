@@ -126,6 +126,15 @@
             <select id="lead-source"><option value="">Todos los orígenes</option></select>
           </div>
           <ul class="list" id="lead-list"></ul>
+          <h2 style="margin-top:18px">No contactar <small id="optout-count"></small></h2>
+          <p class="muted" style="margin:0">Quien pide que no lo contacten queda aquí y el avatar no le escribe ni lo llama por su cuenta. Si vuelve a escribir, sí se le responde. Solo tú puedes quitar una marca.</p>
+          <form id="optout-form" class="row" style="flex-wrap:wrap">
+            <input id="optout-contact" placeholder="Teléfono con indicativo o correo" style="flex:1;min-width:220px" required>
+            <input id="optout-note" placeholder="Motivo (opcional)" style="flex:1;min-width:180px">
+            <button type="submit" class="small">Marcar</button>
+          </form>
+          <p id="optout-msg" class="muted" style="margin:0"></p>
+          <ul class="list" id="optout-list"></ul>
         </section>
 
         <section data-view="visitas" class="card" hidden>

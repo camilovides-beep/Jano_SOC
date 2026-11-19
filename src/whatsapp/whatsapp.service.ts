@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DeepSeekService } from '../llm/deepseek.service';
 import { UsageService } from '../usage/usage.service';
+import { OptOutService } from '../security/optout.service';
 
 /** Texto de la variable {{2}} de la plantilla segun el interes guardado. */
 const INTEREST_TEXT: Record<string, string> = {
@@ -39,7 +40,7 @@ export function toPhone(contact: string, defaultCountry: string): string {
 @Injectable()
 export class WhatsAppService {
   private readonly log = new Logger(WhatsAppService.name);
-  constructor(private readonly cfg: ConfigService, private readonly llm: DeepSeekService, private readonly usage: UsageService) {}
+  constructor(private readonly cfg: ConfigService, private readonly llm: DeepSeekService, private readonly usage: UsageService, private readonly optout: OptOutService) {}
 
   get enabled() { return !!(this.cfg.whatsappToken && this.cfg.whatsappPhoneNumberId && this.cfg.whatsappTemplate); }
 
@@ -48,6 +49,8 @@ export class WhatsAppService {
     if (!this.enabled) return 'WhatsApp no está configurado';
     const to = toPhone(contact, this.cfg.whatsappDefaultCountry);
     if (!to) return 'el contacto no es un número de WhatsApp';
+    // Envio por iniciativa propia: quien pidio no ser contactado no lo recibe, sin excepcion (se comprueba aqui, en codigo).
+    if (this.optout.blocked(to)) { this.log.warn('plantilla de WhatsApp no enviada: el contacto pidió no ser contactado'); return 'esa persona pidió no ser contactada'; }
     const components: unknown[] = [];
     if (this.cfg.whatsappHeaderImageUrl) components.push({ type: 'header', parameters: [{ type: 'image', image: { link: this.cfg.whatsappHeaderImageUrl } }] });
     components.push({ type: 'body', parameters: [{ type: 'text', text: name.split(/\s+/)[0] || name }, { type: 'text', text: INTEREST_TEXT[interest] ?? INTEREST_TEXT.otro }] });

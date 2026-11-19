@@ -12,6 +12,7 @@ import { ImagesService } from '../images/images.service';
 import { DecisionsService } from '../decisions/decisions.service';
 import { Kind, KINDS, QUESTIONS } from '../decisions/questions';
 import { SettingsService } from '../settings/settings.service';
+import { OptOutService } from '../security/optout.service';
 import { MusicService } from '../music/music.service';
 import { AlertsService } from '../ops/alerts.service';
 import { OpsService } from '../ops/ops.service';
@@ -25,7 +26,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -152,7 +153,20 @@ export class OwnerController {
 
   // ---- interesados (solo desde un dispositivo registrado) ----
   @Get('leads')
-  async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: await this.leads.list() }; }
+  async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: (await this.leads.list()).map((l) => ({ ...l, blocked: this.optout.blocked(l.contact) })) }; }
+
+  // ---- no contactar: la lista se ve, se amplia a mano y solo aqui se quita una marca ----
+  @Get('optouts')
+  async optouts(@Req() req: Request) { this.require(req); return { optouts: await this.optout.list() }; }
+  @Post('optouts')
+  async addOptout(@Req() req: Request, @Body() body: { contact?: string; note?: string }) {
+    this.require(req);
+    const contact = String(body?.contact ?? '');
+    if (!this.optout.key(contact)) throw new HttpException({ error: 'escribe un teléfono (con indicativo) o un correo' }, 400);
+    return { ok: true, added: await this.optout.mark(contact, 'panel', String(body?.note ?? 'Marcado por Javier'), 'javier') };
+  }
+  @Delete('optouts/:id')
+  async liftOptout(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.optout.lift(Number(id)) }; }
 
   @Get('leads.csv')
   async csv(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

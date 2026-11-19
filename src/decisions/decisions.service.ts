@@ -74,7 +74,14 @@ export class DecisionsService implements OnModuleInit, OnModuleDestroy {
       try {
         const r = await within(this.backup.ask(state, Object.fromEntries(weak.map((id) => [id, questions[id]])), deadline), deadline);
         tokens += r.tokens;
-        for (const id of weak) if (r.answers[id]) { raw[id] = { ...r.answers[id], by: this.backup.name, backup: true }; usedBackup = true; }
+        for (const id of weak) {
+          if (!r.answers[id]) continue;
+          const q = questions[id], first = raw[id];
+          // Conservadora: el "si" de cualquiera de los dos gana; el dudoso del principal no se pierde por un "no" del respaldo.
+          if (q.type === 'yesno' && q.conservative && first?.value === true) raw[id] = { ...first, backup: true };
+          else raw[id] = { ...r.answers[id], by: this.backup.name, backup: true };
+          usedBackup = true;
+        }
       } catch (e) { error ||= this.note(this.backup.name, e); }
     }
 
@@ -89,7 +96,11 @@ export class DecisionsService implements OnModuleInit, OnModuleDestroy {
     const ms = Date.now() - t0;
     this.usage.add('decisiones'); if (defaulted) this.usage.add('decisiones_defecto');
     const row = { kind, subject: opts.subject ?? '', state, decided, usedBackup, defaulted, shadow, ms, tokens, error };
-    const id = shadow && this.backup ? this.shadowCompare(row, questions, primaryAnswers) : this.save(row, null);
+    // En sombra se compara con el respaldo: siempre que el principal se aparte del valor por defecto (lo interesante) y, del
+    // resto, solo una muestra, para no duplicar el costo de lo que se evalua en cada turno.
+    const flagged = ids.some((i) => primaryAnswers[i] && primaryAnswers[i].value !== questions[i].fallback);
+    const compare = shadow && !!this.backup && (flagged || Math.random() < (def?.compareRate ?? 1));
+    const id = compare ? this.shadowCompare(row, questions, primaryAnswers) : this.save(row, null);
     return { id, answers: effective as Answers<Q>, shadow, ms };
   }
 

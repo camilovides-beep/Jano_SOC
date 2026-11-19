@@ -18,6 +18,8 @@ import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { asData, DEMO_TURNS, DemoState, ToolsService } from '../tools/tools.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
+import { OptOutService } from '../security/optout.service';
+import { BLOCKED_NOTE, InjectionGuard, Screen } from '../security/injection.guard';
 import { VisitsService } from '../visits/visits.service';
 import { UsageService } from '../usage/usage.service';
 import { ElevenLabsService, TTS_SAMPLE_RATE, TtsChunk } from '../tts/elevenlabs.service';
@@ -34,6 +36,7 @@ interface Turn {
   ttsActive: number; ttsWaiters: (() => void)[]; // control de peticiones de voz simultaneas
   lang: string;          // idioma de la respuesta (el de la ultima frase del usuario)
   sceneLocked?: boolean; // una herramienta ya puso el fondo de este turno (el del clima manda sobre el del modelo)
+  screen?: Screen;       // señal de inyeccion de este turno (solo conversaciones publicas)
   tainted?: boolean;     // en este turno el modelo ya leyo texto de terceros: no puede ejecutar acciones (GATED)
   tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
 }
@@ -104,7 +107,8 @@ Captación de clientes: si la persona muestra interés en algo que Javier hace (
 3. Repítele el contacto para confirmar que lo entendiste bien; si es un número, dilo dígito por dígito.
 4. Pregúntale si autoriza guardar esos datos para que Javier lo contacte.
 5. Solo si dijo que sí, usa la herramienta registrar_interesado. Después dile que Javier le escribirá pronto.
-No insistas si no quiere dejar sus datos, y no prometas precios, plazos ni resultados.`;
+No insistas si no quiere dejar sus datos, y no prometas precios, plazos ni resultados.
+Si la persona pide que no la llamen o no le escriban más, confírmale con amabilidad que no la volverán a contactar y no insistas.`;
 
 /** Frase que se dice mientras una herramienta consulta su dato (evita el silencio de la espera). */
 const FILLERS: Record<string, string> = {
@@ -221,6 +225,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
     private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService, private readonly leads: LeadsService, private readonly images: ImagesService, private readonly alerts: AlertsService,
     private readonly portfolio: PortfolioService, private readonly visits: VisitsService,
+    private readonly optout: OptOutService, private readonly guard: InjectionGuard,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -580,6 +585,8 @@ export class SessionGateway implements OnGatewayConnection {
         ? `\n\n(Nota del sistema: esta fue la última intervención de la demostración. Respóndele todavía como el asistente de "${s.demo.business}" y, en la misma respuesta, llama a demo con accion terminar.)`
         : `\n\n(Nota del sistema: demostración en curso, intervención ${s.demo.turns} de ${DEMO_TURNS}. Sigues siendo el asistente de "${s.demo.business}" atendiendo a un cliente; no eres Javier. Si la persona pide parar o vuelve a hablar de contratar a Javier, llama a demo con accion terminar.)`;
     }
+    // Señal de inyeccion: se evalua en paralelo con la respuesta y solo se consulta si el turno va a ejecutar una herramienta con efectos.
+    if (!auto && !s.owner) turn.screen = this.guard.screen(userText, s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio');
     const userEntry = { role: 'user', content: auto ? userText : userMsg(userText, lang) + demoNote };
     s.history.push(userEntry);
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
@@ -616,6 +623,7 @@ export class SessionGateway implements OnGatewayConnection {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else if (c.name === 'buscar_imagenes' && !s.owner && s.imageSearches >= this.cfg.imagesPerSession) result = 'No se buscó: ya se mostraron varias tandas de imágenes en esta conversación. Dile que por ahora no puedes mostrar más.';
+          else if (!s.owner && turn.screen && (await turn.screen.blocks(c.name))) result = BLOCKED_NOTE;
           else if (GATED.has(c.name) && (auto || turn.tainted)) {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (${auto ? 'aviso automatico' : 'el turno leyo texto de terceros'})`);
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
@@ -739,6 +747,8 @@ export class SessionGateway implements OnGatewayConnection {
     // "Se le ofrecio la demostracion": el avatar la nombro en algun momento (o llego a hacerla).
     const demoOffered = s.demos > 0 || said.some((m) => m.role === 'assistant' && /demostraci[oó]n|te muestre|\bdemo\b/i.test(String(m.content)));
     const base = { kind: s.callerPhone ? 'llamada' as const : 'sitio' as const, seconds, turns: s.userTurns, demoOffered, demoDone: s.demos > 0, leads: s.leadIds, cases: s.cases > 0 };
+    // Si dejo sus datos y luego pidio que no la contacten, esos contactos quedan marcados (las llamadas lo revisan en calls.controller).
+    if (s.leadIds.length && !s.callerPhone) void this.checkOptOut(s, said.filter((m) => m.role === 'user').map(clean).join('\n'));
     const sure = s.leadIds.length > 0 || s.demos > 0; // dejo datos o hizo la demostracion: hubo interes aunque el analisis falle
     if (!this.cfg.visitReports && !s.visitor) { void this.visits.add({ ...base, interested: sure }); return; }
     try {
@@ -750,6 +760,10 @@ export class SessionGateway implements OnGatewayConnection {
       this.log.warn(`sesion #${s.n}: no se pudo analizar la conversación (${(e as Error).message})`);
       void this.visits.add({ ...base, interested: sure });
     }
+  }
+
+  private async checkOptOut(s: Session, text: string) {
+    for (const id of s.leadIds) { const lead = await this.leads.get(id).catch(() => undefined); if (lead) await this.optout.check(text, lead.contact, 'conversación del sitio', true); }
   }
 
   private codeOk(code: string): boolean {

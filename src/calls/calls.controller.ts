@@ -8,6 +8,7 @@ import { SessionGateway } from '../session/session.gateway';
 import { CallMedia } from './call-media';
 import { CallSocket } from './call-socket';
 import { WaChatService } from '../whatsapp/wa-chat.service';
+import { OptOutService } from '../security/optout.service';
 
 const safeEqual = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -27,8 +28,8 @@ export class CallsController {
   private readonly active = new Map<string, CallMedia>();
   private readonly sockets = new Map<string, CallSocket>();
   /** Transcripcion de cada llamada en curso: quien llama, inicio y las frases de cada lado. */
-  private readonly logs = new Map<string, { who: string; start: number; lines: string[]; avatar: string; speech: number }>();
-  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway, private readonly chat: WaChatService) {}
+  private readonly logs = new Map<string, { who: string; from: string; start: number; lines: string[]; avatar: string; speech: number }>();
+  constructor(private readonly cfg: ConfigService, private readonly leads: LeadsService, private readonly gateway: SessionGateway, private readonly chat: WaChatService, private readonly optout: OptOutService) {}
 
   @Get()
   verify(@Query('hub.mode') mode: string, @Query('hub.verify_token') token: string, @Query('hub.challenge') challenge: string) {
@@ -92,7 +93,7 @@ export class CallsController {
     this.active.set(id, media);
     const t0 = Date.now();
     let rate = 24000;
-    this.logs.set(id, { who, start: Date.now(), lines: [], avatar: '', speech: 0 });
+    this.logs.set(id, { who, from: String(from ?? ''), start: Date.now(), lines: [], avatar: '', speech: 0 });
     const socket = new CallSocket(
       (msg) => {                                              // lo que la conversacion le manda al "navegador"
         const log = this.logs.get(id);
@@ -149,6 +150,8 @@ export class CallsController {
     const head = `📞 Llamada con el avatar — ${log.who}\n⏱ ${secs} s · audio recibido ${st.seconds.toFixed(0)} s · ICE: ${st.iceLog.join(' → ') || st.ice}`;
     const body = log.lines.length ? log.lines.join('\n') : '(no hubo conversación reconocida)';
     void this.leads.logConversation('llamada', log.who, secs, log.lines);
+    // Si quien llamo pidio que no lo contacten, queda marcado (se revisa lo que dijo, en segundo plano).
+    if (log.from) void this.optout.check(log.lines.filter((l) => l.startsWith('🧑')).map((l) => l.slice(2).trim()).join('\n'), log.from, 'llamada de WhatsApp', true);
     const err = await this.leads.telegramLong(`${head}\n\n${body}`);
     if (err) this.log.warn(`transcripcion de ${id}: ${err}`);
     const wav = media.recording();

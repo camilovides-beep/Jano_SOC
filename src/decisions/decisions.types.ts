@@ -5,7 +5,9 @@
 export type Question =
   | { type: 'choice'; ask: string; options: Record<string, string>; fallback: string }
   | { type: 'score'; ask: string; levels: string[]; fallback: number }
-  | { type: 'yesno'; ask: string; yes?: string; no?: string; fallback: boolean };
+  | { type: 'yesno'; ask: string; yes?: string; no?: string; fallback: boolean;
+      /** Pregunta de seguridad: si hubo que consultar al respaldo, basta con que uno de los dos diga que si. */
+      conservative?: boolean };
 export type Questions = Record<string, Question>;
 export type Provider = 'jev' | 'deepseek';
 
@@ -38,6 +40,8 @@ export interface KindDef {
   shadow: boolean;
   /** Tiempo maximo de toda la decision, con respaldo incluido. Pasado ese tiempo se aplica el valor por defecto. */
   budgetMs: number;
+  /** En modo sombra, parte de las decisiones (0 a 1) que se comparan con el respaldo. Las que difieren del valor por defecto se comparan siempre. Sin dato = todas. */
+  compareRate?: number;
 }
 
 export interface ProviderResult { answers: Record<string, RawAnswer>; tokens: number }

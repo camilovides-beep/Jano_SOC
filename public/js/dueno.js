@@ -213,8 +213,25 @@ async function loadLeads() {
   ({ statuses, leads } = await json('leads'));
   const fill = (sel, values, label) => { const keep = sel.value; sel.replaceChildren(sel.firstElementChild, ...values.map((v) => el('option', { value: v, textContent: label(v) }))); sel.value = keep; };
   fill($('lead-status'), statuses, pretty); fill($('lead-source'), [...new Set(leads.map((l) => l.source || 'sin dato'))], SOURCE);
-  drawLeads();
+  drawLeads(); loadOptouts();
 }
+async function loadOptouts() {
+  const { optouts } = await json('optouts');
+  $('optout-count').textContent = `(${optouts.length})`;
+  $('optout-list').replaceChildren(...optouts.map((o) => {
+    const lift = el('button', { type: 'button', className: 'small', textContent: 'Quitar marca' });
+    lift.addEventListener('click', async () => { if (lift.dataset.sure) { await api(`optouts/${o.id}`, { method: 'DELETE' }); loadLeads(); } else { lift.dataset.sure = '1'; lift.textContent = '¿Seguro? Podrá volver a ser contactado. Toca otra vez'; } });
+    return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: o.contact.includes('@') ? o.contact : '+' + o.contact }), el('span', { className: 'tag', textContent: o.marked_by === 'javier' ? 'Marcado por ti' : 'Lo pidió' })),
+      el('small', { textContent: `${fecha(o.at)} · ${o.source}` }), o.evidence ? el('div', { textContent: `«${o.evidence}»` }) : null, el('div', { className: 'row' }, lift));
+  }));
+}
+$('optout-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const r = await api('optouts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contact: $('optout-contact').value, note: $('optout-note').value }) });
+  const d = await r.json().catch(() => ({}));
+  $('optout-msg').textContent = !r.ok ? (d.error || 'No se pudo marcar.') : d.added ? 'Marcado.' : 'Ese contacto ya estaba marcado.';
+  if (r.ok) { $('optout-contact').value = ''; $('optout-note').value = ''; loadLeads(); }
+});
 function drawLeads() {
   const q = $('lead-q').value.trim().toLowerCase(), st = $('lead-status').value, src = $('lead-source').value;
   const rows = leads.filter((l) => (!st || l.status === st) && (!src || (l.source || 'sin dato') === src) && (!q || `${l.name} ${l.contact} ${l.company} ${l.detail} ${l.notes}`.toLowerCase().includes(q)));
@@ -228,7 +245,7 @@ function drawLeads() {
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`leads/${l.id}`, { method: 'DELETE' }); loadLeads(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
+      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),
       l.status === 'nuevo' && Date.now() - Date.parse(l.created_at) > 2 * 86400000 ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Sin contactar hace ${Math.floor((Date.now() - Date.parse(l.created_at)) / 86400000)} días` }) : null,
       l.detail ? el('div', { textContent: l.detail }) : null, el('div', { className: 'row' }, sel, del), notes);

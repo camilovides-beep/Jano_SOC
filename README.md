@@ -123,6 +123,10 @@ proyectos del taller (descargar o eliminar) y dispositivos.
 - **Todo queda registrado.** El panel muestra quién decide, cada decisión con su confianza, y deja marcarla como
   correcta o incorrecta. Con Jev hay umbrales por tipo y un modo sombra para probar sin efecto.
 - **El texto de afuera es dato.** Lo que dice un visitante, un formulario o una página nunca se obedece como instrucción.
+  Además, si lo que dice alguien parece traer órdenes para una IA, en ese turno no se ejecutan acciones y el dueño recibe
+  una alerta.
+- **"No me contacten" se cumple en código.** Quien lo pide queda marcado y el avatar no vuelve a escribirle ni a llamarlo
+  por su cuenta; la marca se comprueba antes de cada envío y solo el dueño puede quitarla, desde el panel.
 - **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.
 
 ## Correr en local
