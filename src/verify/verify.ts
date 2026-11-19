@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 /**
- * Verificacion de minijavi (`npm run verificar`): prueba en MODO SIMULACION las reglas que deben cumplirse siempre.
+ * Verificacion de Jano SOC (`npm run verificar`): prueba en MODO SIMULACION las reglas que deben cumplirse siempre.
  * No envia nada a nadie: usa una base temporal y proveedores simulados. Con `--vivo` agrega una pregunta real a cada
  * proveedor de decisiones que tenga clave. Cada etapa de la hoja de ruta agrega aqui sus comprobaciones.
  * Sale con codigo 1 si algo falla; lo que aun no aplica o no tiene datos se dice como "omitida", no como fallo.
@@ -21,7 +21,7 @@ const skip = (why: string): never => { throw new Error('OMITIDA: ' + why); };
 async function main() {
   try { process.loadEnvFile('.env'); } catch { /* sin .env: se usan las variables del entorno */ }
   const realKeys = { jev: process.env.JEV_API_KEY ?? '', deepseek: process.env.DEEPSEEK_API_KEY ?? '' };
-  const dir = mkdtempSync(join(tmpdir(), 'minijavi-verificar-'));
+  const dir = mkdtempSync(join(tmpdir(), 'jano-soc-verificar-'));
   // Nada de esta corrida toca la base real ni avisa por Telegram.
   Object.assign(process.env, { DATA_DIR: dir, DATABASE_URL: '', TELEGRAM_BOT_TOKEN: 'token-de-simulacion', TELEGRAM_CHAT_ID: '4242', TELEGRAM_BUTTONS: '1', DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY || 'x', DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || 'x',
     WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ_EXTRA: '', MODELO_CAPAZ_ESPERA_S: '1', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
@@ -696,8 +696,10 @@ async function main() {
     const hook = (secret: string) => ({ headers: { 'x-alert-secret': secret }, socket: { remoteAddress: '10.0.0.9' } }) as any;
     const status = async (p: Promise<unknown>) => { try { await p; return 200; } catch (e: any) { return e?.getStatus?.() ?? 500; } };
     const body = { titulo: 'Sensor de puerta abierto', severidad: 'alta', origen: 'Sensor 2' };
-    must((await status(new AlertsController(P.cfg, sec).webhook(hook('x'), body))) === 404, 'sin ALERTS_WEBHOOK_SECRET el webhook debería no existir');
-    const cfgWith = Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { alertsWebhookSecret: 'clave-larga-de-prueba' });
+    // La clave se fija aqui (con y sin) para que la prueba no dependa de lo que tenga el .env de quien la corre.
+    const cfgAs = (secret: string) => Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { alertsWebhookSecret: secret });
+    must((await status(new AlertsController(cfgAs(''), sec).webhook(hook('x'), body))) === 404, 'sin ALERTS_WEBHOOK_SECRET el webhook debería no existir');
+    const cfgWith = cfgAs('clave-larga-de-prueba');
     const ctl = new AlertsController(cfgWith, sec);
     must((await status(ctl.webhook(hook('clave-equivocada-xx'), body))) === 401, 'aceptó una clave equivocada');
     const ok: any = await ctl.webhook(hook('clave-larga-de-prueba'), body);
@@ -709,7 +711,7 @@ async function main() {
 
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
-  console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');
+  console.log('\nVERIFICACIÓN DE JANO SOC (simulación: no se envió nada a nadie)\n');
   for (const r of results) console.log(` ${icon[r.state]} ${r.name}${r.note ? `\n     ${r.state === 'omitida' ? 'Omitida: ' : ''}${r.note}` : ''}`);
   const bad = results.filter((r) => r.state === 'FALLA').length;
   console.log(`\n${results.filter((r) => r.state === 'ok').length} bien · ${bad} con fallo · ${results.filter((r) => r.state === 'omitida').length} omitidas\n`);

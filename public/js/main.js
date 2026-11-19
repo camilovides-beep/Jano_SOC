@@ -49,7 +49,7 @@ const ACTIVITIES = {
   leer: { scene: 'codigo', label: '📖 Leyendo código' },
   musica: { scene: 'ecualizador', label: '🎧 Oyendo música', emoji: ['🎵', '🎶'], every: 0.9 },
 };
-let suspended = false, dormant = false, wakeWord = 'Guardian', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
+let suspended = false, dormant = false, wakeWord = 'Jano', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
 function setActivity(name) {
   if (name === activity) return;
   activity = name; avatar.setActivity(name);

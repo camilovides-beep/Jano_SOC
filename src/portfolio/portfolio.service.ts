@@ -22,7 +22,7 @@ const plain = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g
 /** En el prompt van como mucho estos casos (los mas recientes); el resto se puede pedir con la herramienta. */
 const PROMPT_CASES = 12;
 /** Palabras que no sirven para buscar un caso (estan en casi todos los titulos). */
-const STOP = new Set(['para', 'una', 'uno', 'unos', 'unas', 'con', 'los', 'las', 'del', 'por', 'que', 'caso', 'casos', 'proyecto', 'proyectos', 'trabajo', 'trabajos', 'camilo', 'guardian', 'cliente', 'the']);
+const STOP = new Set(['para', 'una', 'uno', 'unos', 'unas', 'con', 'los', 'las', 'del', 'por', 'que', 'caso', 'casos', 'proyecto', 'proyectos', 'trabajo', 'trabajos', 'camilo', 'jano', 'cliente', 'the']);
 
 /**
  * Portafolio de Javier (pedido el 2026-11-18): hasta ahora el avatar solo conocia servicios genericos. Los casos se cargan

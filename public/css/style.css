@@ -42,6 +42,7 @@ button.ghost { background: rgba(255, 255, 255, .12); }
 .gate[hidden], .mic[hidden], .gate-card input[hidden] { display: none; }
 .gate-card { width: min(420px, 100%); background: #171c23; border-radius: 18px; padding: 26px; display: grid; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
 .gate-card h1 { margin: 0; font-size: 22px; }
+.gate-card .gate-sub { margin: -10px 0 0; color: var(--muted); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .gate-card p { margin: 0; color: var(--muted); }
 .gate-card input { font: inherit; padding: 14px; border-radius: 12px; border: 1px solid #2b3440; background: #0f1318; color: var(--fg); }
 .gate-error { color: #ff8a8a !important; min-height: 1.4em; }

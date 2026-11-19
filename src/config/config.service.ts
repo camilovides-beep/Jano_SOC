@@ -169,7 +169,7 @@ export class ConfigService {
     this.deepseekModel = str('DEEPSEEK_MODEL', 'deepseek-flash');
     this.timezone = str('TIMEZONE', 'America/Bogota');
     this.defaultCity = str('DEFAULT_CITY', 'Sincelejo');
-    this.greeting = str('GREETING', '¡Hola! Soy Guardian. ¿De qué quieres hablar?');
+    this.greeting = str('GREETING', '¡Hola! Soy Jano. ¿De qué quieres hablar?');
     this.maxSessions = int('MAX_SESSIONS', 2, 1);
     this.sessionMaxSeconds = int('SESSION_MAX_SECONDS', 600, 10);
     this.idleSeconds = int('IDLE_SECONDS', 120, 10);
@@ -237,7 +237,7 @@ export class ConfigService {
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
     catch { throw new Error('USAGE_PRICES debe ser un JSON como {"deepgram_s":0.0001}'); }
     // Palabra para despertar y las formas en que el reconocedor suele escribirla. La primera es la que se muestra.
-    this.wakeWords = (process.env.WAKE_WORDS || 'guardian,gardian,guardianes').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
+    this.wakeWords = (process.env.WAKE_WORDS || 'jano,yano,hano,janos').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.alertsWebhookSecret = str('ALERTS_WEBHOOK_SECRET');
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();

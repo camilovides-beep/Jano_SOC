@@ -1,14 +1,14 @@
-<h1 align="center">Guardian</h1>
+<h1 align="center">Jano SOC: Physical-Cyber Watch</h1>
 
 <p align="center">
-  <b>Un asistente de voz con IA para ciberseguridad y seguridad de recintos.</b><br>
-  Un casco corintio en 3D que conversa, orienta ante un incidente y se pone en rojo cuando hay una alerta.
+  <b>Vigilancia física y digital con un asistente de voz con IA: Jano.</b><br>
+  Un casco corintio en 3D que conversa sobre ciberseguridad y seguridad de recintos, orienta ante un incidente y se pone en rojo cuando hay una alerta.
 </p>
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/img/guardian.jpg" alt="Guardian en calma: casco dorado con cresta verde azulada, ojos azules y una llama azul que sale de un ojo"></td>
-    <td width="50%"><img src="docs/img/alerta.jpg" alt="Guardian con una alerta abierta: cresta en rojo, los dos ojos encendidos con llamas rojas y el aviso Alerta de seguridad abierta"></td>
+    <td width="50%"><img src="docs/img/jano.jpg" alt="Jano en calma: casco dorado con cresta verde azulada, ojos azules y una llama azul que sale de un ojo"></td>
+    <td width="50%"><img src="docs/img/alerta.jpg" alt="Jano con una alerta abierta: cresta en rojo, los dos ojos encendidos con llamas rojas y el aviso Alerta de seguridad abierta"></td>
   </tr>
   <tr>
     <td align="center"><sub><b>En calma.</b> Ojos y llama azules.</sub></td>
@@ -28,8 +28,8 @@
 
 ## Qué es
 
-Guardian es el asistente con IA de Camilo. Es una sola aplicación (NestJS y una página con Three.js, sin framework ni
-bundler) que:
+Jano SOC es la plataforma de Camilo para vigilar a la vez lo físico y lo digital. Su cara es **Jano**, el asistente con
+IA. Es una sola aplicación (NestJS y una página con Three.js, sin framework ni bundler) que:
 
 - **conversa por voz** en el navegador sobre **ciberseguridad** (cuentas, contraseñas, phishing, fraudes, redes,
   incidentes) y **seguridad de recintos** (cámaras, alarmas, control de acceso, cerraduras, rondas, protocolos ante una
@@ -46,7 +46,7 @@ datos, y nunca pide contraseñas, códigos ni datos de tarjetas.
 
 ## Alertas de seguridad
 
-Mientras haya una alerta abierta, los ojos, la llama, las chispas y la cresta de Guardian se ponen rojos con un fundido, el
+Mientras haya una alerta abierta, los ojos, la llama, las chispas y la cresta de Jano se ponen rojos con un fundido, el
 otro ojo también se enciende con su propia llama, y arriba aparece «Alerta de seguridad abierta». Se ve en todas las pantallas, haya conversación o no. Cuando se resuelven
 todas, vuelve al azul.
 
@@ -55,12 +55,12 @@ Una alerta se abre de cuatro formas:
 | Origen | Cómo |
 |---|---|
 | 📡 **Sistemas externos** | Cámaras, sensores, alarmas o un detector de intrusos envían un `POST /alertas` con la clave del webhook. |
-| 🗣️ **Reporte en conversación** | Alguien le cuenta a Guardian un incidente real que está pasando (una persona forzando una puerta, una cuenta robada ahora mismo, un equipo infectado). No se abre por preguntas generales. |
+| 🗣️ **Reporte en conversación** | Alguien le cuenta a Jano un incidente real que está pasando (una persona forzando una puerta, una cuenta robada ahora mismo, un equipo infectado). No se abre por preguntas generales. |
 | 🎭 **Intento de manipulación** | Alguien intenta darle órdenes ocultas a la IA. |
 | ✋ **Manual** | Camilo la crea desde el panel o por voz en modo dueño (por ejemplo, un simulacro). |
 
 Solo el dueño las resuelve: en la pestaña **Alertas** del panel o por voz en modo dueño («ya revisé lo de la cámara,
-ciérrala»). Cada alerta nueva llega también por Telegram, y en modo dueño Guardian la cuenta en voz.
+ciérrala»). Cada alerta nueva llega también por Telegram, y en modo dueño Jano la cuenta en voz.
 
 - Una alerta igual que siga abierta no se duplica: suma una repetición.
 - Hay un tope de alertas nuevas por hora y por origen, para que nadie pueda inundar el panel.
@@ -93,7 +93,7 @@ flowchart LR
 
 - **Un turno, una tubería.** Deepgram detecta el fin de la frase, DeepSeek responde en streaming y cada frase sale a voz
   en cuanto se completa.
-- **Sin boca.** Guardian habla con los ojos: laten con cada sonido, se entrecierran al sonreír y caen cuando algo le da
+- **Sin boca.** Jano habla con los ojos: laten con cada sonido, se entrecierran al sonreír y caen cuando algo le da
   pena.
 - **Se puede interrumpir.** Hablar encima cancela el modelo y la voz.
 - **Arranque anticipado.** Mientras la persona termina de hablar ya se le pide la respuesta al modelo; si la frase
@@ -188,7 +188,7 @@ Lo demás se enciende al configurarlo:
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Voz de ElevenLabs. Sin ellas (o con `TTS_PROVIDER=browser`) habla con la voz del navegador. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Avisos de alertas, interesados y respaldos por Telegram. |
 | `DATABASE_URL` | PostgreSQL. Sin ella usa SQLite en `DATA_DIR`. |
-| `WAKE_WORDS` | Palabras que lo despiertan (por defecto `guardian`). |
+| `WAKE_WORDS` | Palabras que lo despiertan (por defecto `jano`). |
 | `WHATSAPP_*`, `CALL_*` | Mensajes y llamadas de WhatsApp. |
 | `QDRANT_URL`, `NVIDIA_API_KEY` | Base de conocimiento. |
 | `YOUTUBE_API_KEY` | Música en modo dueño. |
@@ -196,7 +196,7 @@ Lo demás se enciende al configurarlo:
 
 ## Desplegar en Easypanel
 
-1. Crear un servicio **App** desde **GitHub** (`camilovides-beep/miniguard`, rama `main`) con build por **Dockerfile**.
+1. Crear un servicio **App** desde **GitHub** (`camilovides-beep/Jano_SOC`, rama `main`) con build por **Dockerfile**.
 2. Cargar en **Environment** las variables de `.env.example` (`PORT=3000`).
 3. Montar un volumen en `/app/data`: ahí viven la base SQLite (si no hay PostgreSQL), las fotos y los respaldos.
 4. Asignar el dominio con HTTPS al puerto `3000`. El WebSocket usa la misma URL (`wss`).

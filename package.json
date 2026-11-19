@@ -1,5 +1,5 @@
 {
-  "name": "kiosco-avatar",
+  "name": "jano-soc",
   "version": "0.1.0",
   "private": true,
   "description": "Avatar 3D parlante: NestJS + Three.js + Deepgram + DeepSeek + ElevenLabs",

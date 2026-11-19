@@ -93,7 +93,7 @@ const plainWords = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0
  * Modo suspension (pedido por Javier el 2026-11-17): si la frase ENTERA es una orden de callarse, el avatar deja de
  * responder. Se compara la frase completa (sin muletillas) para que "para" dentro de otra frase no lo suspenda.
  */
-const SUSPEND_FILLERS = new Set(['guardian', 'gardian', 'camilo', 'por', 'favor', 'ya', 'oye', 'un', 'momento', 'rato', 'ahora', 'porfa']);
+const SUSPEND_FILLERS = new Set(['jano', 'yano', 'hano', 'camilo', 'por', 'favor', 'ya', 'oye', 'un', 'momento', 'rato', 'ahora', 'porfa']);
 const SUSPEND_ORDERS = new Set(['silenciate', 'silencio', 'hazsilencio', 'guardasilencio', 'callate', 'para', 'parale', 'detente', 'suspendete', 'suspension',
   'modosuspension', 'entraensuspension', 'ponteensuspension', 'duermete', 'aduermete', 'adormir', 'descansa', 'pausa', 'ponteenpausa', 'dejadeescuchar', 'noescuches', 'nomeescuches']);
 const isSuspendOrder = (text: string, names: string[]) => { const w = plainWords(text); return w.length <= 6 && SUSPEND_ORDERS.has(w.filter((x) => !SUSPEND_FILLERS.has(x) && !names.includes(x)).join('')); };
