@@ -9,7 +9,9 @@
     "start": "node dist/main.js",
     "dev": "npm run build && node dist/main.js",
     "conocimiento": "tsc -p tsconfig.json && node dist/knowledge/ingest.js",
-    "restaurar": "node dist/db/restore.js"
+    "restaurar": "node dist/db/restore.js",
+    "verificar": "tsc -p tsconfig.json && node --no-warnings dist/verify/verify.js",
+    "latencia": "node scripts/latencia.mjs"
   },
   "engines": {
     "node": ">=20.12"

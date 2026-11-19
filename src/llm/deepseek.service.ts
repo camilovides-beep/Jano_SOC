@@ -25,6 +25,23 @@ export class DeepSeekService {
     return out;
   }
 
+  /**
+   * Respuesta JSON sin streaming, para decisiones (response_format json_object; verificado en su documentacion el
+   * 2026-11-18: valores admitidos `text` y `json_object`, sin esquema). Devuelve el texto y los tokens de entrada.
+   */
+  async json(messages: unknown[], maxTokens: number, signal?: AbortSignal): Promise<{ text: string; tokens: number }> {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST', headers: { Authorization: `Bearer ${this.cfg.deepseekApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: this.cfg.deepseekModel, messages, stream: false, thinking: { type: 'disabled' }, max_tokens: maxTokens, response_format: { type: 'json_object' } }), signal,
+    });
+    if (!res.ok) throw new Error(`DeepSeek respondio ${res.status}`);
+    const d: any = await res.json();
+    this.usage.add('deepseek_calls'); this.usage.add('deepseek_in', d.usage?.prompt_tokens); this.usage.add('deepseek_cache', d.usage?.prompt_cache_hit_tokens); this.usage.add('deepseek_out', d.usage?.completion_tokens);
+    const text = String(d.choices?.[0]?.message?.content ?? '');
+    if (!text.trim()) throw new Error('DeepSeek devolvió una respuesta vacía');
+    return { text, tokens: Number(d.usage?.prompt_tokens) || 0 };
+  }
+
   async *chat(messages: unknown[], tools: unknown[], signal?: AbortSignal, maxTokens = 400): AsyncGenerator<LlmEvent> {
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',

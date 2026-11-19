@@ -42,6 +42,16 @@ const SCHEMA = [
      demo_offered INTEGER NOT NULL DEFAULT 0, demo_done INTEGER NOT NULL DEFAULT 0, lead INTEGER NOT NULL DEFAULT 0, cases INTEGER NOT NULL DEFAULT 0,
      interest TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', asked TEXT NOT NULL DEFAULT '', objections TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS visits_at ON visits (at)`,
+  // Ajustes editables desde el panel (pesos, umbrales, interruptores), por negocio.
+  `CREATE TABLE IF NOT EXISTS settings (business TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at {{TS}} NOT NULL, PRIMARY KEY (business, key))`,
+  // Registro de cada decision de la capa de decisiones: que se pregunto, quien respondio y que se uso al final.
+  // detail = JSON por pregunta {valor, probabilidades, confianza, quien, respaldo}; shadow = se decidio sin efecto;
+  // agree = en modo sombra, si el proveedor principal coincidio con la referencia; mark = revision de Javier (ok | mal).
+  `CREATE TABLE IF NOT EXISTS decisions (
+     id {{ID}}, business TEXT NOT NULL, at {{TS}} NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL,
+     backup INTEGER NOT NULL DEFAULT 0, defaulted INTEGER NOT NULL DEFAULT 0, shadow INTEGER NOT NULL DEFAULT 0, agree INTEGER, ms INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
+     detail TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT '', mark TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS decisions_at ON decisions (business, at)`,
   // Imagenes generadas con IA: el archivo vive en DATA_DIR/imagenes; aqui queda con que descripcion se pidio.
   `CREATE TABLE IF NOT EXISTS generated_images (id {{ID}}, at {{TS}} NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0)`,
   // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.

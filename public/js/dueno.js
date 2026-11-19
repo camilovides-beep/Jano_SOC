@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -268,7 +268,7 @@ async function loadUsage() {
     ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)], ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
     ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
     ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
-    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
+    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
     ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
     ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
   ];
@@ -277,6 +277,55 @@ async function loadUsage() {
 }
 
 // ---------- taller ----------
+// ---- Decisiones: quien decide (Jev o DeepSeek), umbrales, modo sombra, prueba y registro ----
+const PROVIDERS = { jev: 'Jev', deepseek: 'DeepSeek', defecto: 'valor por defecto' };
+const showValue = (v) => (v === true ? 'sí' : v === false ? 'no' : String(v));
+function answerLine(id, a) {
+  const probs = a.probabilities ? ' · ' + Object.entries(a.probabilities).map(([k, p]) => `${k} ${Math.round(p * 100)} %`).join(', ') : '';
+  return `${id}: ${showValue(a.value)} — ${PROVIDERS[a.by] || a.by}${a.backup ? ' (respaldo)' : ''}${a.confidence === null || a.confidence === undefined ? '' : ` · confianza ${Math.round(a.confidence * 100)} %`}${probs}${a.reference === undefined ? '' : ` · el respaldo dijo: ${showValue(a.reference)}`}`;
+}
+async function patchSetting(key, value) { const r = await api('settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'no se guardó'); }
+async function loadDecisions() {
+  const { status, decisions } = await json('decisions');
+  $('dec-provider').textContent = status.provider === 'jev' ? `Decide Jev (${status.model}), con DeepSeek de respaldo.` : `Decide DeepSeek (${status.model}). Jev está apagado: falta JEV_API_KEY.`;
+  $('dec-note').textContent = status.graded ? 'Con confianza por debajo del umbral, la pregunta se repite al respaldo. En modo sombra Jev decide sin efecto y se compara con el respaldo.'
+    : 'Sin Jev no hay umbrales de confianza ni modo sombra: quedan preparados y se activan solos al configurar la clave.';
+  const row = (cells, tag = 'td') => el('tr', {}, ...cells.map((c) => (c instanceof Node ? el(tag, {}, c) : el(tag, { textContent: c }))));
+  $('dec-kinds').replaceChildren(row(['Decisión', 'Umbral', 'Sombra', 'Total', 'Con respaldo', 'Por defecto', 'Tiempo (mediana)', 'Coincide con el respaldo', 'Revisadas'], 'th'), ...status.kinds.map((k) => {
+    const thr = el('input', { type: 'number', min: 0, max: 1, step: 0.05, value: k.threshold, disabled: !status.graded, style: 'width:80px' });
+    thr.addEventListener('change', async () => { try { await patchSetting(`decisiones.umbral.${k.kind}`, Number(thr.value)); } catch (e) { thr.value = k.threshold; alertText(e.message); } });
+    const sh = el('input', { type: 'checkbox', checked: k.shadowSetting, disabled: !status.graded, 'aria-label': `Modo sombra de ${k.label}` });
+    sh.addEventListener('change', async () => { try { await patchSetting(`decisiones.sombra.${k.kind}`, sh.checked); } catch (e) { sh.checked = k.shadowSetting; alertText(e.message); } });
+    return row([k.label, thr, sh, n(k.n), n(k.backup), n(k.defaulted), k.msMedian === null ? '' : `${n(k.msMedian)} ms (tope ${n(k.budgetMs)})`,
+      k.compared ? `${n(k.agreed)} de ${n(k.compared)} (${Math.round((k.agreed / k.compared) * 100)} %)` : 'sin comparar aún', k.ok + k.bad ? `${k.ok} bien · ${k.bad} mal` : 'ninguna']);
+  }));
+  const sel = $('dec-test-kind'); if (!sel.options.length) sel.replaceChildren(...status.kinds.map((k) => el('option', { value: k.kind, textContent: k.label })));
+  $('dec-count').textContent = `(últimas ${decisions.length})`;
+  $('dec-list').replaceChildren(...(decisions.length ? decisions.map((d) => {
+    let detail = {}; try { detail = JSON.parse(d.detail); } catch { /* registro dañado */ }
+    const label = status.kinds.find((k) => k.kind === d.kind)?.label || d.kind;
+    const mark = (value, text) => { const b = el('button', { type: 'button', className: 'small' + (d.mark === value ? ' on' : ''), textContent: text }); b.addEventListener('click', async () => { await api(`decisions/${d.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mark: d.mark === value ? '' : value }) }); loadDecisions(); }); return b; };
+    return el('li', {},
+      el('div', { className: 'row' }, el('strong', { textContent: label }), el('span', { className: 'tag', textContent: PROVIDERS[d.provider] || d.provider }),
+        Number(d.shadow) ? el('span', { className: 'tag', textContent: 'Sombra: sin efecto' }) : null, Number(d.backup) ? el('span', { className: 'tag', textContent: 'Usó respaldo' }) : null,
+        Number(d.defaulted) ? el('span', { className: 'tag', textContent: 'Valor por defecto' }) : null, d.agree === null ? null : el('span', { className: 'tag', textContent: Number(d.agree) ? 'Coincidió' : 'No coincidió' })),
+      el('small', { textContent: `${fecha(d.at)} · ${n(d.ms)} ms${d.tokens ? ` · ${n(d.tokens)} tokens` : ''}${d.subject ? ` · ${d.subject}` : ''}${d.error ? ` · fallo: ${d.error}` : ''}` }),
+      el('div', { textContent: `«${d.state}»` }),
+      el('pre', { textContent: Object.entries(detail).map(([id, a]) => answerLine(id, a)).join('\n') + (d.outcome ? `\nLo que pasó: ${d.outcome}` : '') }),
+      el('div', { className: 'row' }, mark('ok', d.mark === 'ok' ? '✓ Correcta' : 'Correcta'), mark('mal', d.mark === 'mal' ? '✗ Incorrecta' : 'Incorrecta')));
+  }) : [el('li', { textContent: 'Todavía no hay decisiones registradas. Prueba una arriba.' })]));
+}
+const alertText = (t) => { $('dec-note').textContent = t; };
+$('dec-test').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const out = $('dec-test-out'); out.hidden = false; out.textContent = 'Decidiendo…';
+  const r = await api('decisions/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: $('dec-test-kind').value, text: $('dec-test-text').value }) });
+  if (!r.ok) { out.textContent = 'No se pudo probar.'; return; }
+  const d = await r.json(); let logged = {}; try { logged = JSON.parse(d.logged?.detail || '{}'); } catch { /* sin detalle */ }
+  out.textContent = `${n(d.ms)} ms${d.shadow ? ' · en modo sombra: esto es lo que Jev decidió, pero el código sigue usando el valor por defecto' : ''}\n` + Object.entries(d.shadow ? logged : d.answers).map(([id, a]) => answerLine(id, a)).join('\n');
+  loadDecisions();
+});
+
 async function loadImages() {
   const { enabled, images } = await json('images');
   $('image-count').textContent = `(${images.length})`;

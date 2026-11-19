@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Req, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import type { Request, Response } from 'express';
 import { LeadsService, STATUSES } from '../leads/leads.service';
@@ -9,6 +9,9 @@ import * as QRCode from 'qrcode';
 import { WorkshopService } from '../workshop/workshop.service';
 import { UsageService } from '../usage/usage.service';
 import { ImagesService } from '../images/images.service';
+import { DecisionsService } from '../decisions/decisions.service';
+import { Kind, KINDS, QUESTIONS } from '../decisions/questions';
+import { SettingsService } from '../settings/settings.service';
 import { MusicService } from '../music/music.service';
 import { AlertsService } from '../ops/alerts.service';
 import { OpsService } from '../ops/ops.service';
@@ -22,7 +25,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -166,6 +169,32 @@ export class OwnerController {
 
   @Delete('leads/:id')
   async removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.leads.remove(Number(id)) }; }
+
+  // ---- capa de decisiones: quien decide, registro, umbrales y prueba ----
+  @Get('decisions')
+  async decisionsView(@Req() req: Request, @Query('kind') kind?: string) {
+    this.require(req);
+    return { status: await this.decisions.status(), settings: this.settings.list().filter((s) => s.group === 'decisiones'), decisions: await this.decisions.list(100, typeof kind === 'string' && kind in KINDS ? kind : '') };
+  }
+  @Patch('settings')
+  async setSetting(@Req() req: Request, @Body() body: { key?: string; value?: unknown }) {
+    this.require(req);
+    const err = await this.settings.set(String(body?.key ?? ''), body?.value);
+    if (err) throw new HttpException({ error: err }, 400);
+    return { ok: true };
+  }
+  @Patch('decisions/:id')
+  async markDecision(@Req() req: Request, @Param('id') id: string, @Body() body: { mark?: string }) { this.require(req); return { ok: await this.decisions.mark(Number(id), String(body?.mark ?? '')) }; }
+  /** Prueba un texto contra un tipo de decision, sin efectos: sirve para ver quien decide y con que confianza. */
+  @Post('decisions/test')
+  async testDecision(@Req() req: Request, @Body() body: { kind?: string; text?: string }) {
+    this.require(req);
+    const kind = String(body?.kind ?? ''), text = String(body?.text ?? '').trim().slice(0, 2000);
+    if (!(kind in KINDS) || text.length < 2) throw new HttpException({ error: 'faltan kind o text' }, 400);
+    const d = await this.decisions.decide(kind, text, QUESTIONS[kind as Kind], { subject: 'prueba del panel', budgetMs: 8000 });
+    await d.id;
+    return { shadow: d.shadow, ms: d.ms, answers: d.answers, logged: (await this.decisions.list(1, kind))[0] ?? null };
+  }
 
   // ---- imagenes generadas con IA ----
   @Get('images')

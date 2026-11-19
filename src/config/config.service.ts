@@ -54,6 +54,13 @@ export class ConfigService {
   /** n8n: webhook al que se reenvian los mensajes de WhatsApp y secreto compartido (cabecera X-Forward-Secret). */
   readonly n8nWebhookUrl: string;
   readonly n8nSecret: string;
+  /** Negocio al que pertenecen los datos nuevos (decisiones, ajustes). Hoy hay uno solo; las tablas ya lo llevan. */
+  readonly businessId: string;
+  /** Jev (TypeSafe) decide si hay clave; sin ella la capa de decisiones usa DeepSeek. */
+  readonly jevApiKey: string;
+  readonly jevModel: string;
+  /** Dias que se conserva el registro de decisiones. */
+  readonly decisionsKeepDays: number;
   /** Quien responde los mensajes de WhatsApp: 'avatar' (por defecto), 'n8n' (se reenvian a N8N_WEBHOOK_URL) u 'off'. */
   readonly whatsappReplies: 'avatar' | 'n8n' | 'off';
   /** Minutos sin mensajes para dar por cerrado un chat de WhatsApp (resumen, embudo e informe). */
@@ -196,6 +203,10 @@ export class ConfigService {
     this.whatsappForwardSecret = str('WHATSAPP_FORWARD_SECRET');
     this.n8nWebhookUrl = str('N8N_WEBHOOK_URL');
     this.n8nSecret = str('N8N_SECRET');
+    this.businessId = str('BUSINESS_ID', 'principal').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'principal';
+    this.jevApiKey = str('JEV_API_KEY');
+    this.jevModel = str('JEV_MODEL', 'jev-1.14.0');
+    this.decisionsKeepDays = int('DECISIONS_KEEP_DAYS', 90, 1);
     const replies = str('WHATSAPP_REPLIES', 'avatar').toLowerCase();
     this.whatsappReplies = replies === 'n8n' || replies === 'off' ? replies : 'avatar';
     this.waIdleMinutes = int('WHATSAPP_IDLE_MINUTES', 30, 2);

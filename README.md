@@ -113,6 +113,18 @@ Acceso por dispositivo registrado (cookie firmada), sin usuarios ni contraseñas
 Además: interesados con estado y notas, visitas resumidas, transcripciones de llamadas y chats, portafolio con fotos,
 proyectos del taller (descargar o eliminar) y dispositivos.
 
+## Seguridad y límites
+
+- **Decisiones en un solo lugar.** Todo lo que el avatar decide (no lo que conversa) pasa por una capa de decisiones con
+  preguntas cerradas. Con `JEV_API_KEY` decide [Jev](https://docs.typesafe.ai) y DeepSeek queda de respaldo; sin ella
+  decide DeepSeek. El resto del código no sabe quién decidió.
+- **Una decisión nunca frena una conversación.** Cada tipo tiene un tiempo máximo; si el proveedor falla o tarda, se
+  aplica un valor por defecto seguro.
+- **Todo queda registrado.** El panel muestra quién decide, cada decisión con su confianza, y deja marcarla como
+  correcta o incorrecta. Con Jev hay umbrales por tipo y un modo sombra para probar sin efecto.
+- **El texto de afuera es dato.** Lo que dice un visitante, un formulario o una página nunca se obedece como instrucción.
+- **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.
+
 ## Correr en local
 
 ```bash
@@ -128,6 +140,8 @@ Otros comandos:
 ```bash
 npm run conocimiento              # carga conocimiento/publico y conocimiento/privado en Qdrant
 npm run restaurar -- <respaldo>   # restaura un respaldo en una base vacía
+npm run verificar                 # comprueba en simulación las reglas de seguridad y decisiones
+npm run latencia                  # mide la latencia de voz contra el servidor en marcha
 ```
 
 ## Variables de entorno
@@ -168,7 +182,10 @@ src/
   workshop/   taller con Claude Code y sitios publicados
   knowledge/  base de conocimiento (Qdrant)
   owner/      panel y dispositivos del dueño
+  decisions/  capa de decisiones (Jev o DeepSeek), con registro y umbrales
+  settings/   ajustes que se cambian desde el panel
   ops/ usage/ alertas, respaldos y consumo
+  verify/     comprobaciones de `npm run verificar`
   db/         PostgreSQL con respaldo en SQLite
 public/       página estática: avatar, sincronía de labios, audio, efectos y panel
 prompts/      personalidad del avatar

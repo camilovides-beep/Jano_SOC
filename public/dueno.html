@@ -37,6 +37,8 @@
     small, .muted { color: var(--muted); }
     .tag { background: rgba(79, 140, 255, .22); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
     button.small { padding: 7px 12px; min-height: 34px; font-size: 14px; }
+    button.small.on { outline: 2px solid var(--accent); }
+    select { font: inherit; padding: 8px 10px; border-radius: 10px; background: #10141a; color: inherit; border: 1px solid rgba(255, 255, 255, .14); }
     button.danger { background: #5a2630; }
     .msg { min-height: 1.4em; color: #ff8a8a; }
     .ok { color: var(--ok); }
@@ -94,6 +96,7 @@
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
           <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
+          <button role="tab" data-tab="decisiones">Decisiones</button>
           <button role="tab" data-tab="consumo">Consumo</button>
           <button role="tab" data-tab="taller">Taller</button>
           <button role="tab" data-tab="dispositivos">Dispositivos</button>
@@ -156,6 +159,32 @@
             </form>
           </div>
           <div class="card"><h2>Casos <small id="case-count"></small></h2><ul class="list" id="case-list"></ul></div>
+        </section>
+
+        <section data-view="decisiones" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2>Quién decide</h2>
+            <p id="dec-provider" style="font-size:18px;margin:0"></p>
+            <p id="dec-note" class="muted" style="margin:0"></p>
+          </div>
+          <div class="card">
+            <h2>Tipos de decisión, últimos 7 días</h2>
+            <div style="overflow-x:auto"><table id="dec-kinds"></table></div>
+          </div>
+          <div class="card">
+            <h2>Probar una decisión</h2>
+            <p class="muted" style="margin:0">Escribe un texto y mira qué decide. No tiene ningún efecto: solo queda en el registro.</p>
+            <form id="dec-test" class="row" style="align-items:flex-start;flex-wrap:wrap">
+              <select id="dec-test-kind"></select>
+              <input id="dec-test-text" placeholder="Por ejemplo: por favor no me vuelvan a escribir" style="flex:1;min-width:240px" required>
+              <button type="submit" class="small">Probar</button>
+            </form>
+            <pre id="dec-test-out" hidden></pre>
+          </div>
+          <div class="card">
+            <h2>Registro <small id="dec-count"></small></h2>
+            <ul class="list" id="dec-list"></ul>
+          </div>
         </section>
 
         <section data-view="imagenes" class="card" hidden>
