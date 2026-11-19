@@ -96,6 +96,7 @@
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
           <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
+          <button role="tab" data-tab="aprobaciones" id="tab-aprobaciones">Aprobaciones</button>
           <button role="tab" data-tab="autonomia">Autonomía</button>
           <button role="tab" data-tab="bitacora">Bitácora</button>
           <button role="tab" data-tab="decisiones">Decisiones</button>
@@ -172,6 +173,16 @@
           <div class="card"><h2>Casos <small id="case-count"></small></h2><ul class="list" id="case-list"></ul></div>
         </section>
 
+        <section data-view="aprobaciones" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2>Esperan tu decisión <small id="apr-count"></small></h2>
+            <p id="apr-note" class="muted" style="margin:0"></p>
+            <ul class="list" id="apr-pending"></ul>
+          </div>
+          <div class="card" id="apr-waiting-card" hidden><h2>Aprobadas, esperando su momento <small id="apr-waiting-count"></small></h2><p class="muted" style="margin:0">Salen solas cuando abra el horario o haya cupo. Puedes cancelarlas.</p><ul class="list" id="apr-waiting"></ul></div>
+          <div class="card"><h2>Ya decididas</h2><ul class="list" id="apr-recent"></ul></div>
+        </section>
+
         <section data-view="autonomia" style="display:grid;gap:16px" hidden>
           <div class="card">
             <h2>Cómo está actuando el avatar por su cuenta</h2>
@@ -192,7 +203,7 @@
           <p class="muted" style="margin:0">Todo lo que el avatar hizo, intentó o habría hecho por su cuenta. Solo se agregan filas: no se pueden cambiar ni borrar.</p>
           <div class="filters">
             <input id="act-q" type="search" placeholder="Buscar por contacto, texto o motivo">
-            <select id="act-status"><option value="">Todos los resultados</option><option value="enviada">Enviadas</option><option value="simulada">Simuladas</option><option value="requiere_aprobacion">Esperan aprobación</option><option value="bloqueada">Bloqueadas</option><option value="fallo">Fallaron</option></select>
+            <select id="act-status"><option value="">Todos los resultados</option><option value="enviada">Enviadas</option><option value="simulada">Simuladas</option><option value="requiere_aprobacion">Esperan aprobación</option><option value="rechazada">Rechazadas</option><option value="bloqueada">Bloqueadas</option><option value="fallo">Fallaron</option></select>
             <select id="act-kind"><option value="">Todas las acciones</option></select>
             <select id="act-days"><option value="7">7 días</option><option value="30" selected>30 días</option><option value="365">Un año</option></select>
           </div>

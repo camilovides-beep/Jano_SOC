@@ -65,6 +65,13 @@ const SCHEMA = [
      simulated INTEGER NOT NULL DEFAULT 0, decisions TEXT NOT NULL DEFAULT '', ref INTEGER, prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS actions_at ON actions (business, at)`,
   `CREATE INDEX IF NOT EXISTS actions_contact ON actions (business, contact)`,
+  // Bandeja de aprobaciones (etapa 2b): lo que el avatar quiere hacer y necesita el si de Javier. No vencen.
+  // payload = lo necesario para ejecutarla al aprobar; nonce = va en los botones de Telegram; result = que paso al decidir.
+  `CREATE TABLE IF NOT EXISTS approvals (
+     id {{ID}}, business TEXT NOT NULL, created_at TEXT NOT NULL, kind TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', lead_id INTEGER, trigger TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+     why TEXT NOT NULL DEFAULT '', cost_usd {{REAL}} NOT NULL DEFAULT 0, consent INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pendiente',
+     decided_at TEXT NOT NULL DEFAULT '', decided_by TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', nonce TEXT NOT NULL DEFAULT '', tg_message INTEGER, retry_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX IF NOT EXISTS approvals_status ON approvals (business, status)`,
   // Imagenes generadas con IA: el archivo vive en DATA_DIR/imagenes; aqui queda con que descripcion se pidio.
   `CREATE TABLE IF NOT EXISTS generated_images (id {{ID}}, at {{TS}} NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0)`,
   // Chat de WhatsApp: los mensajes de cada numero (memoria del hilo) y el estado de la conversacion abierta.

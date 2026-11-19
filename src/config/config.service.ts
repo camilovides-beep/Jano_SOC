@@ -37,6 +37,8 @@ export class ConfigService {
   /** Bot de Telegram que avisa cada interesado nuevo. Ambos vacios = sin aviso. */
   readonly telegramBotToken: string;
   readonly telegramChatId: string;
+  /** Escuchar los botones de Telegram (aprobar / rechazar). Solo un proceso por bot: en local, 0. */
+  readonly telegramButtons: boolean;
   /** Direccion del QR de contacto (por ejemplo un enlace de WhatsApp). Vacia = sin QR. */
   /** WhatsApp Cloud API: plantilla que se envia a cada interesado. Sin token = desactivado. */
   readonly whatsappToken: string;
@@ -200,6 +202,7 @@ export class ConfigService {
     this.leadsWebhookUrl = str('LEADS_WEBHOOK_URL');
     this.telegramBotToken = str('TELEGRAM_BOT_TOKEN');
     this.telegramChatId = str('TELEGRAM_CHAT_ID');
+    this.telegramButtons = str('TELEGRAM_BUTTONS', '1') !== '0';
     this.whatsappToken = str('WHATSAPP_TOKEN');
     this.whatsappPhoneNumberId = str('WHATSAPP_PHONE_NUMBER_ID');
     this.whatsappTemplate = str('WHATSAPP_TEMPLATE');

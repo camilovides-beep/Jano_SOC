@@ -23,12 +23,14 @@ async function main() {
   const realKeys = { jev: process.env.JEV_API_KEY ?? '', deepseek: process.env.DEEPSEEK_API_KEY ?? '' };
   const dir = mkdtempSync(join(tmpdir(), 'minijavi-verificar-'));
   // Nada de esta corrida toca la base real ni avisa por Telegram.
-  Object.assign(process.env, { DATA_DIR: dir, DATABASE_URL: '', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '', DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY || 'x', DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || 'x',
+  Object.assign(process.env, { DATA_DIR: dir, DATABASE_URL: '', TELEGRAM_BOT_TOKEN: 'token-de-simulacion', TELEGRAM_CHAT_ID: '4242', TELEGRAM_BUTTONS: '1', DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY || 'x', DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || 'x',
     WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ_EXTRA: '', MODELO_CAPAZ_ESPERA_S: '1', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
   // En simulacion NADA sale a internet: toda peticion se anota y recibe una respuesta de mentira. Solo `--vivo` usa la red.
   const realFetch = globalThis.fetch, sent: string[] = [];
   let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
-  globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url)); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+  const tg: { method: string; body: any }[] = []; let tgWebhook = '';
+  globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -47,6 +49,8 @@ async function main() {
   const { PolicyService } = await import('../policy/policy.service');
   const { ActionsService } = await import('../policy/actions.service');
   const { LeadsService } = await import('../leads/leads.service');
+  const { ApprovalsService } = await import('../policy/approvals.service');
+  const { TelegramService } = await import('../ops/telegram.service');
 
   const usage = { add() {} } as any, alerts = { report() {}, set() {}, send: async () => '' } as any;
   const build = async (jevKey: string) => {
@@ -58,7 +62,8 @@ async function main() {
     const optout = new OptOutService(cfg, db, decisions, alerts), capable = new CapableModelService(cfg, usage), guard = new InjectionGuard(decisions, alerts, settings, cfg, capable);
     await optout.onModuleInit();
     const policy = new PolicyService(cfg, settings), actions = new ActionsService(cfg, db, policy, optout, alerts), wa = new WhatsAppService(cfg, llm, usage, optout);
-    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa, policy, actions, leads: new LeadsService(cfg, wa, db, actions, policy) };
+    const telegram = new TelegramService(cfg), approvals = new ApprovalsService(cfg, db, actions, policy, telegram);
+    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa, policy, actions, telegram, approvals, leads: new LeadsService(cfg, wa, db, approvals, policy) };
   };
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** Proveedor simulado: responde lo que se le diga, tarda lo que se le diga o falla. */
@@ -501,6 +506,7 @@ async function main() {
     must(/prueba/.test(String(await P.leads.announce(other))) && !sent.some((u) => u.includes('graph.facebook.com')), 'sin producción se intentó escribir a un número que no es de prueba');
     await setP('simulacion', false); await setP('produccion', true);
     must(/aprobación/.test(String(await P.leads.announce(lead))) && !sent.some((u) => u.includes('graph.facebook.com')), 'en producción la plantilla debía esperar aprobación, no salir sola');
+    for (const a of await P.approvals.pending()) await P.approvals.decide(a.id, false, 'panel'); // la bandeja queda limpia para las pruebas siguientes
     return 'simulación: no sale; sin producción: solo números de prueba; en producción: espera aprobación';
   });
 
@@ -522,7 +528,82 @@ async function main() {
   });
   A.now = () => new Date();
 
-  for (const [name, stage] of [['Bandeja de aprobaciones: aprobar y rechazar', '2b'], ['Ningún mensaje autónomo sale con precios sin catálogo', '2c']] as const)
+  // ---------- Etapa 2b: bandeja de aprobaciones y botones de Telegram ----------
+  const waSent = () => sent.filter((u) => u.includes('graph.facebook.com')).length;
+  const press = (data: string, chat = '4242') => P.telegram.handle({ update_id: 1, callback_query: { id: 'q1', from: { id: Number(chat) }, message: { message_id: 77, chat: { id: Number(chat) } }, data } });
+  const newLead = async (phone: string) => { const l = await P.leads.add({ name: 'Persona Prueba', contact: phone, interest: 'chatbots', source: 'voz' }); const why = await P.leads.announce(l); return { l, why }; };
+
+  await check('Bandeja de aprobaciones: aprobar y rechazar, desde el panel y desde Telegram', async () => {
+    at('2026-11-24T15:00:00.000Z'); await setP('simulacion', false); await setP('produccion', true); sent.length = 0; tg.length = 0;
+    const a = await newLead('3006660001');
+    must(/aprobación/.test(String(a.why)) && waSent() === 0, 'la plantilla salió sin aprobación');
+    const [p1] = await P.approvals.pending();
+    must(p1 && p1.contact === '573006660001' && p1.kind === 'plantilla_bienvenida' && /Persona/.test(p1.trigger) && p1.content.includes('Plantilla'), 'la solicitud no dice qué, a quién, por qué y el texto');
+    const msg = tg.find((t) => t.method === 'sendMessage' && t.body.reply_markup);
+    must(msg && msg.body.chat_id === '4242' && msg.body.reply_markup.inline_keyboard[0].length === 2 && /Texto exacto/.test(msg.body.text), 'no llegó a Telegram el mensaje con los dos botones');
+    const data = msg!.body.reply_markup.inline_keyboard[0].map((b: any) => b.callback_data);
+    must(data.every((d: string) => Buffer.byteLength(d) <= 64), 'los datos de los botones pasan de 64 bytes');
+    await newLead('3006660001'); must((await P.approvals.pending()).length === 1, 'la misma solicitud quedó repetida en la bandeja');
+
+    await press(data[0], '999'); must(waSent() === 0 && (await P.approvals.pending()).length === 1, 'una pulsación desde otro chat tuvo efecto');
+    await press(`ap:${p1.id}:000000000000`); must(waSent() === 0, 'una pulsación con la clave equivocada tuvo efecto');
+    await press(data[0]);
+    must(waSent() === 1 && (await P.approvals.pending()).length === 0, `aprobar por Telegram debía enviar la plantilla una vez (envíos: ${waSent()})`);
+    must(tg.some((t) => t.method === 'answerCallbackQuery') && tg.some((t) => t.method === 'editMessageText' && t.body.reply_markup.inline_keyboard.length === 0), 'no respondió la pulsación o no quitó los botones');
+    await press(data[0]); await press(data[1]);
+    must(waSent() === 1 && (await P.approvals.decide(p1.id, true, 'panel')).ok === false, 'una solicitud ya decidida se ejecutó otra vez');
+
+    const b = await newLead('3006660002'); void b; const [p2] = await P.approvals.pending();
+    const rej = await P.approvals.decide(p2.id, false, 'panel');
+    must(rej.ok && waSent() === 1 && (await A.list({ days: 3650, status: 'rechazada' })).some((r) => r.contact === '573006660002'), 'rechazar debía no enviar nada y quedar en la bitácora');
+    return 'aprobó por Telegram (una sola vez), rechazó por el panel, ignoró otro chat y una clave falsa';
+  });
+
+  await check('Aprobar no se salta los límites: se vuelve a comprobar al ejecutar', async () => {
+    at('2026-11-25T15:00:00.000Z'); sent.length = 0;
+    await newLead('3006660003'); const [p3] = await P.approvals.pending();
+    await P.optout.mark('3006660003', 'prueba', 'ya no me escriban', 'javier');
+    const r3 = await P.approvals.decide(p3.id, true, 'panel');
+    must(r3.ok && /no ser contactada/.test(r3.text) && waSent() === 0, `aprobada tras un "no me contacten": ${r3.text}`);
+    await newLead('3006660004'); const [p4] = await P.approvals.pending();
+    at('2026-11-26T04:00:00.000Z'); // 11 de la noche en Colombia
+    const r4 = await P.approvals.decide(p4.id, true, 'panel');
+    must(/horario/.test(r4.text) && /sale sola/.test(r4.text) && waSent() === 0, `aprobada fuera de horario: ${r4.text}`);
+    must((await P.approvals.waiting()).length === 1 && (await P.approvals.flush()) === 0 && waSent() === 0, 'de noche no debía salir ni reintentarse');
+    at('2026-11-26T13:30:00.000Z'); // 8:30 de la mañana siguiente
+    must((await P.approvals.flush()) === 1 && waSent() === 1 && (await P.approvals.waiting()).length === 0, `al abrir el horario debía salir sola (envíos: ${waSent()})`);
+    must((await P.approvals.flush()) === 0 && waSent() === 1, 'lo que ya salió se envió otra vez');
+    at('2026-11-27T04:00:00.000Z'); await newLead('3006660007'); const [p7] = await P.approvals.pending(); await P.approvals.decide(p7.id, true, 'telegram');
+    must((await P.approvals.decide(p7.id, false, 'panel')).ok && (await P.approvals.waiting()).length === 0, 'no se pudo cancelar algo aprobado que seguía esperando');
+    at('2026-11-27T13:30:00.000Z'); must((await P.approvals.flush()) === 0 && waSent() === 1, 'una aprobación cancelada salió igual');
+    at('2026-11-26T15:00:00.000Z'); await setP('simulacion', true);
+    await newLead('3006660005'); const [p5] = await P.approvals.pending();
+    const before5 = waSent(), r5 = await P.approvals.decide(p5.id, true, 'panel');
+    must(/simulación/.test(r5.text) && waSent() === before5, `aprobada en modo simulación: ${r5.text}`);
+    must((await P.approvals.pending()).length === 0, 'quedaron solicitudes sin decidir');
+    return 'no sale si la persona pidió no ser contactada; de noche queda en espera, sale sola al abrir el horario y se puede cancelar';
+  });
+
+  await check('Aprobaciones: no vencen y se recuerdan una vez al día', async () => {
+    at('2026-11-27T15:00:00.000Z'); await setP('simulacion', false); tg.length = 0;
+    await newLead('3006660006');
+    must(!(await P.approvals.remind(new Date('2026-11-27T12:00:00.000Z'))), 'recordó antes de la hora configurada (9:00)');
+    must(await P.approvals.remind(new Date('2026-11-27T15:00:00.000Z')) && tg.some((t) => t.method === 'sendMessage' && /pendiente/.test(t.body.text)), 'no envió el recordatorio');
+    must(!(await P.approvals.remind(new Date('2026-11-27T20:00:00.000Z'))), 'recordó dos veces el mismo día');
+    must(await P.approvals.remind(new Date('2026-12-15T15:00:00.000Z')) && (await P.approvals.pending()).length === 1, 'semanas después la solicitud debía seguir pendiente y recordarse');
+    for (const a of await P.approvals.pending()) await P.approvals.decide(a.id, false, 'panel');
+  });
+
+  await check('Telegram: si el bot tiene un webhook no se toca, y los botones quedan apagados', async () => {
+    tgWebhook = 'https://otro-sistema.example/webhook'; tg.length = 0;
+    const t = new TelegramService(P.cfg); t.onPress(async () => undefined); t.onApplicationBootstrap(); await wait(200);
+    must(!t.polling && /webhook/.test(t.problem), 'con un webhook registrado empezó a consultar igual');
+    must(!tg.some((x) => /deleteWebhook|setWebhook/.test(x.method)) && !tg.some((x) => x.method === 'getUpdates'), 'tocó el webhook del bot o consultó novedades');
+    tgWebhook = ''; t.onModuleDestroy();
+  });
+  A.now = () => new Date();
+
+  for (const [name, stage] of [['Ningún mensaje autónomo sale con precios sin catálogo', '2c']] as const)
     await check(name, async () => skip(`todavía no existe lo que comprueba (etapa ${stage})`));
 
   rmSync(dir, { recursive: true, force: true });

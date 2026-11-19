@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
-import { ActionsService } from '../policy/actions.service';
+import { ApprovalsService } from '../policy/approvals.service';
 import { PolicyService } from '../policy/policy.service';
 import { WhatsAppService, toPhone } from '../whatsapp/whatsapp.service';
 
@@ -25,7 +25,10 @@ const clip = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').tri
 @Injectable()
 export class LeadsService {
   private readonly log = new Logger(LeadsService.name);
-  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService, private readonly actions: ActionsService, private readonly policy: PolicyService) {}
+  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService, private readonly approvals: ApprovalsService, private readonly policy: PolicyService) {
+    // Asi se envia la plantilla cuando Javier la aprueba en la bandeja.
+    approvals.register('plantilla_bienvenida', (p: { contact: string; name: string; interest: string }) => this.whatsapp.sendWelcome(p.contact, p.name, p.interest));
+  }
 
   /** Donde se estan guardando los datos ('postgres' o 'sqlite'), para mostrarlo en el panel. */
   get dbKind() { return this.db.kind; }
@@ -150,10 +153,10 @@ export class LeadsService {
     if (this.whatsapp.enabled && lead.source !== 'whatsapp') {
       if (!toPhone(lead.contact, this.cfg.whatsappDefaultCountry)) wa = 'el contacto no es un número de WhatsApp';
       else {
-        const r = await this.actions.run({ kind: 'plantilla_bienvenida', contact: lead.contact, leadId: lead.id, consent: !!lead.consent_at, trigger: 'interesado nuevo',
+        const r = await this.approvals.submit({ kind: 'plantilla_bienvenida', contact: lead.contact, leadId: lead.id, consent: !!lead.consent_at, trigger: `interesado nuevo: ${lead.name}`,
           content: `Plantilla "${this.cfg.whatsappTemplate}" para ${lead.name.split(/\s+/)[0]}, interés: ${lead.interest.replaceAll('_', ' ')}`, costUsd: this.policy.limit('costo_plantilla_usd') },
-          () => this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest));
-        wa = r.status === 'enviada' ? '' : r.status === 'simulada' ? 'simulación: no se envió nada (quedó en la bitácora)' : r.status === 'requiere_aprobacion' ? `espera tu aprobación (${r.reason})` : r.reason || 'no se envió';
+          { contact: lead.contact, name: lead.name, interest: lead.interest });
+        wa = r.status === 'enviada' ? '' : r.status === 'simulada' ? 'simulación: no se envió nada (quedó en la bitácora)' : r.status === 'requiere_aprobacion' ? 'espera tu aprobación (en el panel, pestaña Aprobaciones; si usas Telegram, te llegó aparte con botones)' : r.reason || 'no se envió';
       }
     }
     void this.notify(lead, wa);

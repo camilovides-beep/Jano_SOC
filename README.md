@@ -130,6 +130,9 @@ proyectos del taller (descargar o eliminar) y dispositivos.
 - **Autonomía con límites en código.** Todo lo que el avatar haría por iniciativa propia pasa por una sola puerta:
   interruptor general, "no contactar", números de prueba, aprobación, horario, topes por contacto y por día, intentos
   por persona y gasto. Los límites se ponen en el panel (pestaña Autonomía). Arranca en **modo simulación**: nada sale.
+- **Bandeja de aprobaciones.** Lo que no puede hacer solo (por ejemplo escribirle por primera vez a un número que
+  alguien dictó en el sitio) espera el sí del dueño, en el panel o con botones de Telegram. No vencen, y aprobar no se
+  salta los límites: al ejecutar se comprueban otra vez.
 - **Bitácora.** Cada intento, salga o no, queda registrado. Solo se agregan filas y van encadenadas por su huella: si
   alguien cambia o borra una, el panel lo muestra.
 - **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.

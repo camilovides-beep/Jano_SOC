@@ -31,8 +31,12 @@ export interface ActionRequest {
   /** Javier ya aprobo esta accion en la bandeja: no vuelve a pedir aprobacion, pero TODO lo demas se comprueba otra vez. */
   approved?: boolean;
 }
-export type ActionStatus = 'enviada' | 'simulada' | 'bloqueada' | 'requiere_aprobacion' | 'fallo';
-export interface ActionResult { status: ActionStatus; reason: string; id: number | null }
+export type ActionStatus = 'enviada' | 'simulada' | 'bloqueada' | 'requiere_aprobacion' | 'rechazada' | 'fallo';
+export interface ActionResult {
+  status: ActionStatus; reason: string; id: number | null;
+  /** Bloqueada por algo que pasa solo (horario, tope del dia, pausa): mas tarde si podria salir. */
+  temporary?: boolean;
+}
 export interface ActionRow { id: number; at: string; kind: string; channel: string; contact: string; lead_id: number | null; trigger: string; content: string; status: ActionStatus; reason: string; cost_usd: number; simulated: number; decisions: string; ref: number | null; prev_hash: string; hash: string }
 
 /**
@@ -56,10 +60,10 @@ export class ActionsService {
   /** Comprueba todo y, si se puede, ejecuta `send` (que devuelve '' o el motivo del fallo). Nunca lanza errores. */
   async run(req: ActionRequest, send: () => Promise<string>): Promise<ActionResult> {
     const def = ACTION_KINDS[req.kind];
-    const done = async (status: ActionStatus, reason = '', simulated = false) => ({ status, reason, id: await this.append(req, def.channel, status, reason, simulated) });
+    const done = async (status: ActionStatus, reason = '', simulated = false, temporary = false): Promise<ActionResult> => ({ status, reason, temporary, id: await this.append(req, def.channel, status, reason, simulated) });
     try {
       const why = await this.refusal(req, def);
-      if (why) return await done(why.status, why.reason);
+      if (why) return await done(why.status, why.reason, false, !!why.temporary);
       if (this.policy.simulation) return await done('simulada', 'modo simulación: no se envió nada', true);
       const err = await send().catch((e) => (e as Error).message || 'fallo sin detalle');
       return await done(err ? 'fallo' : 'enviada', err);
@@ -69,16 +73,24 @@ export class ActionsService {
     }
   }
 
+  /** El contacto como se guarda en la bitacora y en la bandeja (digitos con indicativo, o correo). */
+  contactKey(contact: string) { return this.optout.key(contact) || contact.slice(0, 60); }
+
+  /** Javier rechazo en la bandeja una accion que esperaba aprobacion: queda anotado en la bitacora y no se hace nada. */
+  async rejected(req: ActionRequest, by: string): Promise<number | null> {
+    return this.append(req, ACTION_KINDS[req.kind]?.channel ?? '', 'rechazada', `rechazada por Javier (${by})`, false);
+  }
+
   /** Por que NO puede salir esta accion ahora (null = puede salir). El orden importa: lo mas grave primero. */
-  private async refusal(req: ActionRequest, def: (typeof ACTION_KINDS)[ActionKind]): Promise<{ status: ActionStatus; reason: string } | null> {
-    const block = (reason: string) => ({ status: 'bloqueada' as const, reason }), p = this.policy, now = this.now();
+  private async refusal(req: ActionRequest, def: (typeof ACTION_KINDS)[ActionKind]): Promise<{ status: ActionStatus; reason: string; temporary?: boolean } | null> {
+    const block = (reason: string) => ({ status: 'bloqueada' as const, reason }), later = (reason: string) => ({ status: 'bloqueada' as const, reason, temporary: true }), p = this.policy, now = this.now();
     if (!def) return block('ese tipo de acción no existe');
-    if (p.paused) return block('las acciones autónomas están en pausa');
+    if (p.paused) return later('las acciones autónomas están en pausa');
     if (!this.optout.key(req.contact)) return block('el contacto no es un teléfono ni un correo válido');
     if (this.optout.blocked(req.contact)) return block('esa persona pidió no ser contactada');
     if (!p.production && !p.isTestNumber(req.contact)) return block('producción no está activada y el contacto no es un número de prueba');
     if (!req.approved && (def.class === 'aprobacion' || !req.consent)) return { status: 'requiere_aprobacion', reason: !req.consent ? 'primer contacto sin autorización registrada' : `${def.label}: siempre pide aprobación` };
-    const late = p.outsideHours(now); if (late) return block(late);
+    const late = p.outsideHours(now); if (late) return later(late);
 
     const since = p.since(now), key = this.optout.key(req.contact), call = def.channel === 'llamada';
     // Cuenta lo que ya salio (o habria salido, en simulacion: asi la bitacora muestra los topes como serian de verdad).
@@ -87,12 +99,12 @@ export class ActionsService {
     const isCall = (k: string) => (ACTION_KINDS as Record<string, { channel: string }>)[k]?.channel === 'llamada';
     const today = rows.filter((r) => r.at >= since.day), mine = today.filter((r) => r.contact === key);
     const perContact = call ? p.limit('max_llamadas_contacto_dia') : p.limit('max_mensajes_contacto_dia'), perDay = call ? p.limit('max_llamadas_dia') : p.limit('max_mensajes_dia'), what = call ? 'llamadas' : 'mensajes';
-    if (mine.filter((r) => isCall(r.kind) === call).length >= perContact) return block(`ya se llegó al tope de ${what} a este contacto por hoy (${perContact})`);
-    if (today.filter((r) => isCall(r.kind) === call).length >= perDay) { this.limitAlert(`${what}-dia`, `Se alcanzó el tope de ${what} autónomos de hoy (${perDay}).`); return block(`ya se llegó al tope de ${what} de hoy (${perDay})`); }
+    if (mine.filter((r) => isCall(r.kind) === call).length >= perContact) return later(`ya se llegó al tope de ${what} a este contacto por hoy (${perContact})`);
+    if (today.filter((r) => isCall(r.kind) === call).length >= perDay) { this.limitAlert(`${what}-dia`, `Se alcanzó el tope de ${what} autónomos de hoy (${perDay}).`); return later(`ya se llegó al tope de ${what} de hoy (${perDay})`); }
     const attempts = rows.filter((r) => r.contact === key || (req.leadId && r.lead_id === req.leadId)).length, maxAttempts = p.limit('max_intentos_interesado');
     if (attempts >= maxAttempts) return block(`ya se hicieron los ${maxAttempts} intentos permitidos con esta persona`);
     const cost = req.costUsd ?? 0, spentDay = sum(today), spentMonth = sum(rows.filter((r) => r.at >= since.month)), capDay = p.limit('gasto_dia_usd'), capMonth = p.limit('gasto_mes_usd');
-    if (capDay > 0 && spentDay + cost > capDay) { this.limitAlert('gasto-dia', `Se alcanzó el tope de gasto diario de las acciones autónomas (${capDay} USD).`); return block(`superaría el gasto máximo de hoy (${capDay} USD)`); }
+    if (capDay > 0 && spentDay + cost > capDay) { this.limitAlert('gasto-dia', `Se alcanzó el tope de gasto diario de las acciones autónomas (${capDay} USD).`); return later(`superaría el gasto máximo de hoy (${capDay} USD)`); }
     if (capMonth > 0 && spentMonth + cost > capMonth) { this.limitAlert('gasto-mes', `Se alcanzó el tope de gasto mensual de las acciones autónomas (${capMonth} USD).`); return block(`superaría el gasto máximo del mes (${capMonth} USD)`); }
     return null;
   }

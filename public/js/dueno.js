@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -104,6 +104,7 @@ async function loadSummary() {
   $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : '#ff8a8a'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
     summary.alerts ? '' : ' · Los avisos por Telegram están apagados (falta configurarlo).');
   drawFunnel(summary.funnel, summary.reports);
+  $('tab-aprobaciones').textContent = summary.approvals ? `Aprobaciones (${summary.approvals})` : 'Aprobaciones'; // que se note al entrar al panel
   barChart($('ch-leads'), s.days.map((d) => d.day), [{ name: 'Interesados', values: s.days.map((d) => d.leads) }], 'interesados');
   hbars($('by-status'), s.byStatus, pretty); hbars($('by-source'), s.bySource, SOURCE); hbars($('by-interest'), s.byInterest, pretty);
 }
@@ -296,7 +297,7 @@ async function loadUsage() {
 // ---------- taller ----------
 // ---- Autonomia: los limites dentro de los que el avatar actua solo. Cada cambio se guarda al salir del campo. ----
 const MODES = { pausa: '⏸ En pausa: no hace nada por su cuenta.', simulacion: '🧪 Simulación: nada sale de verdad; la bitácora anota lo que habría hecho.', pruebas: '🔬 Pruebas: solo puede contactar a los números de prueba.', produccion: '🟢 Producción: actúa de verdad, dentro de los límites.' };
-const STATUS_LABEL = { enviada: 'Enviada', simulada: 'Simulada', requiere_aprobacion: 'Espera aprobación', bloqueada: 'Bloqueada', fallo: 'Falló' };
+const STATUS_LABEL = { enviada: 'Enviada', simulada: 'Simulada', requiere_aprobacion: 'Espera aprobación', rechazada: 'Rechazada por ti', bloqueada: 'Bloqueada', fallo: 'Falló' };
 const CLASS_LABEL = { libre: 'Libre', autonoma: 'Sola, dentro de los límites', aprobacion: 'Siempre con tu aprobación' };
 function settingField(st, after) {
   const save = async (value, input) => { try { await patchSetting(st.key, value); $('pol-msg').textContent = `Guardado: ${st.label}.`; after?.(); } catch (e) { $('pol-msg').textContent = `No se guardó «${st.label}»: ${e.message}.`; if (input.type === 'checkbox') input.checked = st.value; else input.value = st.value; } };
@@ -305,6 +306,30 @@ function settingField(st, after) {
   if (st.type === 'number') { input = el('input', { type: 'number', min: st.min, max: st.max, step: 'any', value: st.value, style: 'width:120px' }); input.addEventListener('change', () => save(Number(input.value), input)); }
   else { input = el('input', { type: 'text', value: st.value, placeholder: st.example || '', maxLength: st.max, style: 'flex:1;min-width:150px' }); input.addEventListener('change', () => save(input.value, input)); }
   return el('label', { style: 'display:grid;gap:2px' }, el('span', { className: 'row', style: 'flex-wrap:wrap' }, el('span', { textContent: st.label, style: 'min-width:120px' }), input), st.hint ? el('small', { textContent: st.hint }) : null);
+}
+// ---- Aprobaciones: lo que el avatar quiere hacer y necesita tu si. No vencen. ----
+function approvalBody(a, kinds) {
+  return [el('div', { className: 'row' }, el('strong', { textContent: kinds[a.kind]?.label || a.kind }), el('span', { className: 'tag', textContent: a.contact.includes('@') ? a.contact : '+' + a.contact }), a.lead_id ? el('span', { className: 'tag', textContent: `Interesado #${a.lead_id}` }) : null),
+    el('small', { textContent: `Pedida el ${fecha(a.created_at)} · #${a.id}${Number(a.cost_usd) ? ` · costo estimado ${Number(a.cost_usd).toFixed(4)} USD` : ''}` }),
+    el('div', {}, el('small', { textContent: 'Por qué: ' }), `${a.trigger}${a.why ? ` — ${a.why}` : ''}`), el('div', {}, el('small', { textContent: 'Texto exacto: ' }), a.content)];
+}
+async function loadApprovals() {
+  const { pending, waiting, recent, kinds, telegram, simulation } = await json('approvals');
+  $('apr-waiting-card').hidden = !waiting.length; $('apr-waiting-count').textContent = `(${waiting.length})`;
+  $('apr-waiting').replaceChildren(...waiting.map((a) => { const no = el('button', { type: 'button', className: 'small danger', textContent: 'Cancelar' }); no.addEventListener('click', async () => { no.disabled = true; await api(`approvals/${a.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'rechazar' }) }); loadApprovals(); }); return el('li', {}, ...approvalBody(a, kinds), a.result ? el('small', { textContent: a.result }) : null, el('div', { className: 'row' }, no)); }));
+  $('apr-count').textContent = `(${pending.length})`;
+  $('tab-aprobaciones').textContent = pending.length ? `Aprobaciones (${pending.length})` : 'Aprobaciones';
+  $('apr-note').textContent = (simulation ? 'Estás en modo simulación: aunque apruebes, nada sale de verdad; queda en la bitácora. ' : 'Al aprobar se vuelven a comprobar el horario, los topes y si la persona pidió no ser contactada. ')
+    + (!telegram.enabled ? 'Telegram no está configurado: se decide solo aquí.' : telegram.buttons && !telegram.problem ? 'También puedes decidir con los botones del mensaje de Telegram.' : `Los botones de Telegram no están funcionando: ${telegram.problem || 'aún no arrancan'}.`);
+  $('apr-pending').replaceChildren(...(pending.length ? pending.map((a) => {
+    const msg = el('small', {}), yes = el('button', { type: 'button', className: 'small', textContent: 'Aprobar' }), no = el('button', { type: 'button', className: 'small danger', textContent: 'Rechazar' });
+    const decide = async (decision) => { yes.disabled = no.disabled = true; const r = await api(`approvals/${a.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) }); const d = await r.json().catch(() => ({})); msg.textContent = d.text || 'No se pudo decidir.'; setTimeout(loadApprovals, 1800); };
+    yes.addEventListener('click', () => decide('aprobar')); no.addEventListener('click', () => decide('rechazar'));
+    return el('li', {}, ...approvalBody(a, kinds), el('div', { className: 'row' }, yes, no), msg);
+  }) : [el('li', { textContent: 'No hay nada esperando tu aprobación.' })]));
+  $('apr-recent').replaceChildren(...(recent.length ? recent.map((a) => el('li', {}, ...approvalBody(a, kinds),
+    el('div', { className: 'row' }, el('span', { className: 'tag', textContent: a.status === 'aprobada' ? 'Aprobada' : 'Rechazada' }), el('small', { textContent: `${fecha(a.decided_at)} · desde ${a.decided_by === 'telegram' ? 'Telegram' : 'el panel'}` })), a.result ? el('small', { textContent: a.result }) : null))
+    : [el('li', { textContent: 'Todavía no has decidido ninguna.' })]));
 }
 async function loadPolicy() {
   const { status, settings, kinds } = await json('policy');
@@ -316,7 +341,7 @@ async function loadPolicy() {
   $('pol-switches').replaceChildren(...pick(['pausa', 'simulacion', 'produccion', 'numeros_prueba']).map((s) => settingField(s, loadPolicy)));
   $('pol-hours').replaceChildren(...settings.filter((s) => s.group === 'horario').map((s) => settingField(s, loadPolicy)));
   $('pol-tz').textContent = '(hora de Colombia, formato 08:00-18:00)';
-  $('pol-limits').replaceChildren(...pick(['max_mensajes_contacto_dia', 'max_llamadas_contacto_dia', 'max_mensajes_dia', 'max_llamadas_dia', 'max_intentos_interesado', 'gasto_dia_usd', 'gasto_mes_usd', 'costo_plantilla_usd']).map((s) => settingField(s, loadPolicy)));
+  $('pol-limits').replaceChildren(...pick(['max_mensajes_contacto_dia', 'max_llamadas_contacto_dia', 'max_mensajes_dia', 'max_llamadas_dia', 'max_intentos_interesado', 'gasto_dia_usd', 'gasto_mes_usd', 'costo_plantilla_usd', 'recordatorio_hora']).map((s) => settingField(s, loadPolicy)));
   $('pol-kinds').replaceChildren(...Object.values(kinds).map((k) => el('li', { className: 'row' }, el('strong', { textContent: k.label }), el('span', { className: 'tag', textContent: CLASS_LABEL[k.class] }))));
 }
 async function loadActions() {

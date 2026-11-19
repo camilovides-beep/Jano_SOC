@@ -34,6 +34,9 @@ export class PolicyService {
     n('costo_plantilla_usd', 'Costo de una plantilla de WhatsApp (USD)', 0, 10, 'Lo que te cobra Meta por cada plantilla. Con 0 las plantillas no suman al gasto.');
   }
 
+  /** Un ajuste de hora del dia (0 a 23) en el grupo de la politica. */
+  defineHour(key: string, label: string, def: number) { this.settings.define(`politica.${key}`, { type: 'number', def, min: 0, max: 23, label, group: 'politica', hint: 'Hora del día, de 0 a 23 (hora de Colombia).' }); }
+
   get paused() { return this.settings.boolean('politica.pausa'); }
   get simulation() { return this.settings.boolean('politica.simulacion'); }
   get production() { return this.settings.boolean('politica.produccion'); }
