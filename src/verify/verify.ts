@@ -24,7 +24,7 @@ async function main() {
   const dir = mkdtempSync(join(tmpdir(), 'minijavi-verificar-'));
   // Nada de esta corrida toca la base real ni avisa por Telegram.
   Object.assign(process.env, { DATA_DIR: dir, DATABASE_URL: '', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '', DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY || 'x', DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || 'x',
-    WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ_EXTRA: '', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
+    WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ_EXTRA: '', MODELO_CAPAZ_ESPERA_S: '1', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
   // En simulacion NADA sale a internet: toda peticion se anota y recibe una respuesta de mentira. Solo `--vivo` usa la red.
   const realFetch = globalThis.fetch, sent: string[] = [];
   let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
@@ -240,11 +240,11 @@ async function main() {
   // ---------- Etapa 1c: ruta del turno ----------
   await check('Ruta: va en la misma petición que la señal, nunca se espera y solo actúa si se activa', async () => {
     const noop = () => undefined, ALL = ['hora_actual', 'clima', 'registrar_interesado', 'portafolio', 'programar'].map((name) => ({ type: 'function', function: { name } }));
-    const turn = async (b: Awaited<ReturnType<typeof build>>, o: { route: string; owner?: boolean; delay?: number; calls?: string[]; capableFails?: boolean }) => {
+    const turn = async (b: Awaited<ReturnType<typeof build>>, o: { route: string; owner?: boolean; delay?: number; calls?: string[]; capableFails?: boolean; capableHangs?: boolean }) => {
       const a = { ordenes: { value: false, confidence: 0.99 }, turno: { value: o.route, confidence: 0.95 }, turno_dueno: { value: o.route, confidence: 0.95 } };
       const jev = fake('jev', { answers: a, delay: o.delay }); if (b === noJev) b.decisions.useProviders(fake('deepseek', { answers: a })); else b.decisions.useProviders(jev, fake('deepseek', { answers: a }));
       const seen: { tools: string[]; model?: string }[] = []; let round = 0;
-      (b as any).capableStub = { enabled: true, label: 'doble', chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t: any) => t.function.name), model: o.capableFails ? 'capaz (falló)' : 'capaz' }); if (o.capableFails) throw new Error('clave inválida (simulado)'); yield { type: 'text', delta: 'Listo.' }; } };
+      (b as any).capableStub = { enabled: true, label: 'doble', chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t: any) => t.function.name), model: o.capableFails ? 'capaz (falló)' : 'capaz' }); if (o.capableFails) throw new Error('clave inválida (simulado)'); if (o.capableHangs) await new Promise((_r, rej) => (arguments[2] as AbortSignal).addEventListener('abort', () => rej(new Error('cortado')))); yield { type: 'text', delta: 'Listo.' }; } };
       const realEnabled = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(b.capable), 'enabled');
       const llm = { chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t) => t.function.name) }); if (round++ === 0 && o.calls) yield { type: 'tool_calls', calls: o.calls.map((name, i) => ({ id: 't' + i, name, arguments: '{}' })) }; else yield { type: 'text', delta: 'Listo.' }; }, complete: async () => '{}' } as any;
       const tools = { definitions: async () => ALL, run: async () => ({ text: 'hecho' }) } as any;
@@ -283,9 +283,12 @@ async function main() {
     const fb = await turn(withJev, { route: 'encargo', owner: true, capableFails: true });
     must(fb.seen.length === 2 && fb.seen[0].model === 'capaz (falló)' && !fb.seen[1].model, `si el modelo capaz falla, el turno debe seguir con el de siempre (peticiones: ${fb.seen.map((x) => x.model ?? 'normal').join(' → ')})`);
     must(!(await turn(withJev, { route: 'herramienta', owner: true })).first.model, 'el modelo capaz se usó en un turno del dueño que no era un encargo');
+    const slow = await turn(withJev, { route: 'encargo', owner: true, capableHangs: true });
+    must(slow.seen.length === 2 && !slow.seen[1].model && slow.ms < 2500, `un modelo capaz que no empieza a responder debe cortarse y seguir con el de siempre (tardó ${slow.ms} ms; peticiones: ${slow.seen.length})`);
     await set(withJev, false, true, false);
     must(!(await turn(withJev, { route: 'encargo', owner: true })).first.model, 'el modelo capaz se usó con su ajuste apagado');
 
+    await wait(400); // las dos configuraciones comparten la base de la prueba: se deja terminar lo anterior antes de contar
     const before = (await noJev.decisions.list(500, 'ruta')).length;
     await set(noJev, false, true, true); const nj = await turn(noJev, { route: 'charla' });
     const after = (await noJev.decisions.list(500, 'ruta')).length;
@@ -311,6 +314,12 @@ async function main() {
     must(r.text === 'Va bien.' && r.calls.length === 1 && r.calls[0].name === 'programar' && JSON.parse(r.calls[0].arguments).proyecto === 'x', `resultado: ${JSON.stringify(r)}`);
     must(bodies.length === 2 && bodies[0].stream_options && !bodies[1].stream_options && bodies[1].model === 'modelo-capaz-de-prueba' && bodies[1].tools.length === 1, 'tras el rechazo no repitió con el cuerpo mínimo');
     await collect(m.chat([{ role: 'user', content: 'otra' }], [])); must(bodies.length === 3 && !bodies[2].stream_options, 'no recordó que ese proveedor pide el cuerpo mínimo');
+    // Un proveedor que manda la llamada completa, sin `index` y con campos propios (asi lo hace Gemini): deben volver en el historial.
+    capableFetch = (_u, body) => { bodies.push(body); return sse([{ choices: [{ delta: { tool_calls: [{ id: 'g1', type: 'function', function: { name: 'programar', arguments: '{}' }, extra_content: { google: { thought_signature: 'firma-1' } } }] } }] }, '[DONE]']); };
+    const g = await collect(m.chat([{ role: 'user', content: 'encargo' }], []));
+    await collect(m.chat([{ role: 'user', content: 'encargo' }, { role: 'assistant', content: null, tool_calls: [{ id: g.calls[0].id, type: 'function', function: { name: 'programar', arguments: '{}' } }] }, { role: 'tool', tool_call_id: g.calls[0].id, content: 'ok' }], []));
+    const echoed = bodies[bodies.length - 1].messages[1].tool_calls[0];
+    must(g.calls[0].id === 'g1' && echoed.extra_content?.google?.thought_signature === 'firma-1', 'no devolvió al proveedor los campos propios de su llamada a herramienta');
     must(sent.every((u) => !u.includes('api.deepseek.com')), 'el modelo capaz no debe tocar DeepSeek');
     capableFetch = undefined;
     return 'rechazo con 400 → repite sin campos opcionales y lo recuerda';

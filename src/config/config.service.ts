@@ -66,6 +66,8 @@ export class ConfigService {
   readonly capableUrl: string;
   /** Campos extra para el cuerpo de la peticion (JSON), por ejemplo {"reasoning_effort":"low"}. */
   readonly capableExtra: Record<string, unknown>;
+  /** Segundos que se espera a que el modelo capaz EMPIECE a responder; pasado ese tiempo el turno sigue con el modelo de siempre. */
+  readonly capableWaitSeconds: number;
   /** Dias que se conserva el registro de decisiones. */
   readonly decisionsKeepDays: number;
   /** Quien responde los mensajes de WhatsApp: 'avatar' (por defecto), 'n8n' (se reenvian a N8N_WEBHOOK_URL) u 'off'. */
@@ -221,6 +223,7 @@ export class ConfigService {
     try { extra = JSON.parse(str('MODELO_CAPAZ_EXTRA') || '{}'); } catch { throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON, por ejemplo {"reasoning_effort":"low"}'); }
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON');
     this.capableExtra = extra as Record<string, unknown>;
+    this.capableWaitSeconds = int('MODELO_CAPAZ_ESPERA_S', 8, 1);
     this.decisionsKeepDays = int('DECISIONS_KEEP_DAYS', 90, 1);
     const replies = str('WHATSAPP_REPLIES', 'avatar').toLowerCase();
     this.whatsappReplies = replies === 'n8n' || replies === 'off' ? replies : 'avatar';

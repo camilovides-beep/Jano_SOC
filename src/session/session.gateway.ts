@@ -565,14 +565,23 @@ export class SessionGateway implements OnGatewayConnection {
    * rechazada), ese turno sigue con el modelo de siempre: un modelo opcional no puede dejar al avatar sin responder.
    */
   private async *viaCapable(s: Session, turn: Turn, view: unknown[], defs: unknown[]): AsyncGenerator<LlmEvent> {
-    let started = false;
-    try { for await (const ev of this.capable.chat(view, defs, turn.ctrl.signal, 4000)) { started = true; yield ev; } return; }
-    catch (e) {
+    // Tope para EMPEZAR a responder (medido el 2026-11-18: un modelo que razona puede tardar de 3 a 90 s). El avatar no se
+    // queda callado esperando: pasado el tope se corta esa peticion y responde el modelo de siempre.
+    const ctrl = new AbortController(), stop = () => ctrl.abort();
+    turn.ctrl.signal.addEventListener('abort', stop, { once: true });
+    const wait = this.cfg.capableWaitSeconds * 1000;
+    let started = false, why = '';
+    const timer = setTimeout(() => { if (!started) { why = `no empezó a responder en ${this.cfg.capableWaitSeconds} s`; ctrl.abort(); } }, wait);
+    try {
+      for await (const ev of this.capable.chat(view, defs, ctrl.signal, 4000)) { started = true; yield ev; }
+      return;
+    } catch (e) {
       if (started || turn.ctrl.signal.aborted) throw e;
-      this.log.warn(`sesion #${s.n}: el modelo capaz falló (${(e as Error).message.slice(0, 200)}); sigue el modelo de siempre`);
-      this.alerts.report('Modelo capaz', (e as Error).message);
-      turn.capable = false;
-    }
+      why ||= (e as Error).message.slice(0, 200);
+    } finally { clearTimeout(timer); turn.ctrl.signal.removeEventListener('abort', stop); }
+    this.log.warn(`sesion #${s.n}: el modelo capaz no respondió (${why}); sigue el modelo de siempre`);
+    this.alerts.report('Modelo capaz', why);
+    turn.capable = false;
     yield* this.llm.chat(view, defs, turn.ctrl.signal, 2000);
   }
   private async *drain(spec: Spec): AsyncGenerator<LlmEvent> {

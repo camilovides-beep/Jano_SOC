@@ -15,7 +15,7 @@ interface Preset { url: string; format: 'openai' | 'anthropic'; tokensField: str
 export const PRESETS: Record<string, Preset> = {
   deepseek: { url: 'https://api.deepseek.com', format: 'openai', tokensField: 'max_tokens', extra: { thinking: { type: 'disabled' } }, verified: 'documentación y llamadas reales' },
   openai: { url: 'https://api.openai.com/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'SIN verificar: su referencia de la API no se dejó leer (403)' },
-  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', format: 'openai', tokensField: '', verified: 'dirección, clave Bearer, herramientas y streaming según su documentación; el tope de salida no está documentado (no se envía)' },
+  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', format: 'openai', tokensField: '', verified: 'probado con gemini-4-neon el 2026-11-18 (pregunta y herramienta); exige devolver la firma de razonamiento de cada llamada a herramienta, y el conector lo hace' },
   kimi: { url: 'https://api.moonshot.ai/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'dirección, streaming y herramientas según su documentación' },
   grok: { url: 'https://api.x.ai/v1', format: 'openai', tokensField: '', verified: 'SIN verificar: su documentación solo describe otra API (Responses)' },
   anthropic: { url: '', format: 'anthropic', tokensField: 'max_tokens', verified: 'guía del SDK oficial; sin probar con una clave real' },
@@ -38,6 +38,11 @@ export class CapableModelService implements OnModuleInit {
   private anthropic?: Anthropic;
   /** Bloques completos de las respuestas de Anthropic que pidieron herramientas (incluyen su razonamiento): hay que devolverlos tal cual en la siguiente peticion del mismo turno. */
   private readonly kept = new Map<string, unknown[]>();
+  /**
+   * Campos propios del proveedor en una llamada a herramienta (Gemini manda `extra_content.google.thought_signature` y exige
+   * recibirlo de vuelta en el historial; sin el responde 400). Se guardan por id de la llamada y se reponen al enviar.
+   */
+  private readonly extras = new Map<string, Record<string, unknown>>();
   /** Un proveedor que rechazo los campos opcionales: de ahi en adelante se le habla con el cuerpo minimo. */
   private minimal = false;
   readonly problem: string = '';
@@ -71,7 +76,10 @@ export class CapableModelService implements OnModuleInit {
 
   // ---- Formato OpenAI (chat completions con SSE) ----
   private async *chatOpenAi(messages: unknown[], tools: unknown[], signal: AbortSignal | undefined, maxTokens: number): AsyncGenerator<LlmEvent> {
-    const base = { model: this.cfg.capableModel, messages, stream: true, ...(tools.length ? { tools } : {}) };
+    // El historial guarda las llamadas a herramientas en su forma comun (id, nombre, argumentos): aqui se les repone lo propio del proveedor.
+    const withExtras = (messages as OpenAiMessage[]).map((m) => (m.role === 'assistant' && m.tool_calls?.some((c) => this.extras.has(c.id))
+      ? { ...m, tool_calls: m.tool_calls.map((c) => ({ ...c, ...this.extras.get(c.id) })) } : m));
+    const base = { model: this.cfg.capableModel, messages: withExtras, stream: true, ...(tools.length ? { tools } : {}) };
     // Cuerpo completo: tope de salida, consumo en el ultimo fragmento y lo propio del proveedor. Si el proveedor lo rechaza
     // con un 400 (cada uno acepta campos distintos), se repite una vez con el cuerpo minimo y se recuerda para las siguientes.
     const full = { ...base, ...(this.preset!.tokensField ? { [this.preset!.tokensField]: maxTokens } : {}), stream_options: { include_usage: true }, ...this.preset!.extra, ...this.cfg.capableExtra };
@@ -79,13 +87,13 @@ export class CapableModelService implements OnModuleInit {
     let res = await post(this.minimal ? { ...base, ...this.cfg.capableExtra } : full);
     if (res.status === 400 && !this.minimal) {
       const why = (await res.text().catch(() => '')).slice(0, 300);
-      this.log.warn(`${this.label} rechazó la petición completa (${why}); se repite con el cuerpo mínimo`);
-      this.minimal = true;
+      this.log.warn(`${this.label} rechazó la petición completa (${why.replace(/\s+/g, ' ')}); se repite con el cuerpo mínimo`);
       res = await post({ ...base, ...this.cfg.capableExtra });
+      if (res.ok) this.minimal = true; // el problema eran los campos opcionales: se recuerda. Si tampoco sirvio, el fallo es otro.
     }
     if (!res.ok || !res.body) throw new Error(`${this.label} respondió ${res.status}: ${(await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)}`);
     this.usage.add('capaz_calls');
-    const calls: ToolCall[] = [], decoder = new TextDecoder();
+    const calls: ToolCall[] = [], extra: Record<string, unknown>[] = [], decoder = new TextDecoder();
     let pending = '';
     for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {
       pending += decoder.decode(part, { stream: true });
@@ -108,10 +116,18 @@ export class CapableModelService implements OnModuleInit {
           if (tc.id) c.id = tc.id;
           if (tc.function?.name) c.name = tc.function.name;
           if (tc.function?.arguments) c.arguments += tc.function.arguments;
+          const { index: _i, id: _id, type: _t, function: _f, ...own } = tc; // lo que no es estandar se conserva tal cual
+          if (Object.keys(own).length) (extra[i] ??= {}), Object.assign(extra[i], own);
         }
       }
     }
-    const ready = calls.filter((c) => c && c.name).map((c, i) => ({ ...c, id: c.id || `call_${Date.now()}_${i}` }));
+    const ready: ToolCall[] = [];
+    calls.forEach((c, i) => {
+      if (!c || !c.name) return;
+      const id = c.id || `call_${Date.now()}_${i}`;
+      if (extra[i]) { this.extras.set(id, extra[i]); if (this.extras.size > 400) this.extras.delete(this.extras.keys().next().value!); }
+      ready.push({ ...c, id });
+    });
     if (ready.length) yield { type: 'tool_calls', calls: ready };
   }
 
