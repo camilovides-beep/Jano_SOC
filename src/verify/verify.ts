@@ -24,10 +24,11 @@ async function main() {
   const dir = mkdtempSync(join(tmpdir(), 'minijavi-verificar-'));
   // Nada de esta corrida toca la base real ni avisa por Telegram.
   Object.assign(process.env, { DATA_DIR: dir, DATABASE_URL: '', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '', DEEPGRAM_API_KEY: process.env.DEEPGRAM_API_KEY || 'x', DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || 'x',
-    WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
+    WHATSAPP_TOKEN: 'token-de-simulacion', WHATSAPP_PHONE_NUMBER_ID: '111', WHATSAPP_TEMPLATE: 'plantilla', MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ_EXTRA: '', WHATSAPP_REPLIES: 'avatar', LEADS_WEBHOOK_URL: '', N8N_WEBHOOK_URL: '', TTS_PROVIDER: 'browser', ACCESS_CODE: '', VISIT_REPORTS: '0', VISITOR_MEMORY_DAYS: '0', QDRANT_URL: '' });
   // En simulacion NADA sale a internet: toda peticion se anota y recibe una respuesta de mentira. Solo `--vivo` usa la red.
   const realFetch = globalThis.fetch, sent: string[] = [];
-  globalThis.fetch = (async (url: any) => { sent.push(String(url)); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+  let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
+  globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url)); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -42,6 +43,7 @@ async function main() {
   const { WhatsAppService } = await import('../whatsapp/whatsapp.service');
   const { WaChatService } = await import('../whatsapp/wa-chat.service');
   const { SessionGateway } = await import('../session/session.gateway');
+  const { CapableModelService, toAnthropic } = await import('../llm/capable.service');
 
   const usage = { add() {} } as any, alerts = { report() {}, set() {}, send: async () => '' } as any;
   const build = async (jevKey: string) => {
@@ -50,19 +52,22 @@ async function main() {
     const settings = new SettingsService(cfg, db), llm = new DeepSeekService(cfg, usage);
     const decisions = new DecisionsService(cfg, db, llm, usage, settings, alerts);
     await settings.onModuleInit();
-    const optout = new OptOutService(cfg, db, decisions, alerts), guard = new InjectionGuard(decisions, alerts);
+    const optout = new OptOutService(cfg, db, decisions, alerts), capable = new CapableModelService(cfg, usage), guard = new InjectionGuard(decisions, alerts, settings, cfg, capable);
     await optout.onModuleInit();
-    return { cfg, db, settings, llm, decisions, optout, guard, wa: new WhatsAppService(cfg, llm, usage, optout) };
+    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa: new WhatsAppService(cfg, llm, usage, optout) };
   };
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** Proveedor simulado: responde lo que se le diga, tarda lo que se le diga o falla. */
-  const fake = (name: 'jev' | 'deepseek', o: { answers?: Record<string, any>; delay?: number; fail?: boolean }): P & { calls: number } => ({
-    name, calls: 0,
+  const fake = (name: 'jev' | 'deepseek', o: { answers?: Record<string, any>; delay?: number; fail?: boolean }): P & { calls: number; asked: string[][] } => ({
+    name, calls: 0, asked: [],
     async ask(_s, questions, signal) {
       this.calls++;
       if (o.delay) await Promise.race([wait(o.delay), new Promise((_, rej) => signal.addEventListener('abort', () => rej(Object.assign(new Error('tiempo'), { name: 'TimeoutError' }))))]);
       if (o.fail) throw new Error('proveedor caído (simulado)');
-      return { tokens: 10, answers: Object.fromEntries(Object.keys(questions).filter((id) => o.answers?.[id]).map((id) => [id, o.answers![id]])) };
+      // Los identificadores llegan como tipo__pregunta cuando van varios tipos en una peticion; la respuesta simulada se busca por el nombre de la pregunta.
+      const key = (id: string) => id.split('__').pop()!;
+      this.asked.push(Object.keys(questions));
+      return { tokens: 10, answers: Object.fromEntries(Object.keys(questions).filter((id) => o.answers?.[key(id)]).map((id) => [id, o.answers![key(id)]])) };
     },
   });
   const Q = QUESTIONS.no_contactar, TXT = 'Por favor no me vuelvan a escribir.';
@@ -216,7 +221,7 @@ async function main() {
       const tools = { definitions: async () => [], run: async (name: string) => { ran.push(name); return { text: 'hecho' }; } } as any;
       const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
         { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
-        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard);
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable);
       const client = { readyState: 1, OPEN: 1, send: (raw: string) => { const m = JSON.parse(raw); if (m.type === 'say') said += m.text; }, on: noop, close: noop };
       const sess: any = { n: 1, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
       gw.start(client, sess, null); await wait(150);
@@ -230,6 +235,136 @@ async function main() {
     must((await talk(withJev, false, false)).ran.includes('registrar_interesado'), 'sin señal no se pudo registrar al interesado');
     must((await talk(withJev, true, true)).ran.includes('registrar_interesado'), 'la señal no debe aplicarse a lo que dice el dueño en su propio dispositivo');
     return 'visitante con señal: bloqueada; sin señal: corre; dueño: no aplica';
+  });
+
+  // ---------- Etapa 1c: ruta del turno ----------
+  await check('Ruta: va en la misma petición que la señal, nunca se espera y solo actúa si se activa', async () => {
+    const noop = () => undefined, ALL = ['hora_actual', 'clima', 'registrar_interesado', 'portafolio', 'programar'].map((name) => ({ type: 'function', function: { name } }));
+    const turn = async (b: Awaited<ReturnType<typeof build>>, o: { route: string; owner?: boolean; delay?: number; calls?: string[]; capableFails?: boolean }) => {
+      const a = { ordenes: { value: false, confidence: 0.99 }, turno: { value: o.route, confidence: 0.95 }, turno_dueno: { value: o.route, confidence: 0.95 } };
+      const jev = fake('jev', { answers: a, delay: o.delay }); if (b === noJev) b.decisions.useProviders(fake('deepseek', { answers: a })); else b.decisions.useProviders(jev, fake('deepseek', { answers: a }));
+      const seen: { tools: string[]; model?: string }[] = []; let round = 0;
+      (b as any).capableStub = { enabled: true, label: 'doble', chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t: any) => t.function.name), model: o.capableFails ? 'capaz (falló)' : 'capaz' }); if (o.capableFails) throw new Error('clave inválida (simulado)'); yield { type: 'text', delta: 'Listo.' }; } };
+      const realEnabled = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(b.capable), 'enabled');
+      const llm = { chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t) => t.function.name) }); if (round++ === 0 && o.calls) yield { type: 'tool_calls', calls: o.calls.map((name, i) => ({ id: 't' + i, name, arguments: '{}' })) }; else yield { type: 'text', delta: 'Listo.' }; }, complete: async () => '{}' } as any;
+      const tools = { definitions: async () => ALL, run: async () => ({ text: 'hecho' }) } as any;
+      const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
+        { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable);
+      const client = { readyState: 1, OPEN: 1, send: noop, on: noop, close: noop };
+      const sess: any = { n: 1, ready: false, owner: !!o.owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
+      gw.start(client, sess, null); await wait(120);
+      // La decisión arranca con el turno; aquí se le da un momento para que llegue antes de armar la petición, salvo en el caso "tarde".
+      const screenReady = o.delay ? 0 : 40, t0 = Date.now();
+      const p = (async () => { await wait(screenReady); })();
+      const orig = gw.context?.bind(gw); if (orig) gw.context = async (...args: any[]) => { await p; return orig(...args); };
+      await gw.respond(client, sess, 'Hola, ¿cómo estás hoy? Cuéntame algo.', 'es'); const ms = Date.now() - t0; await wait(60);
+      for (const t of sess.timers) { clearInterval(t); clearTimeout(t); } sess.ready = false;
+      void realEnabled; return { first: seen[0], seen, ms, jev };
+    };
+    const set = async (b: Awaited<ReturnType<typeof build>>, shadow: boolean, groups: boolean, capable: boolean) => { await b.settings.set('decisiones.sombra.ruta', shadow); await b.settings.set('ruta.grupos', groups); await b.settings.set('ruta.modelo_capaz', capable); };
+
+    await set(withJev, true, true, true);
+    const sh = await turn(withJev, { route: 'charla' });
+    must(sh.first.tools.length === 5 && !sh.first.model, 'en modo sombra la ruta cambió lo que recibe el modelo');
+    must(sh.jev.calls === 1 && sh.jev.asked[0].some((i) => i.endsWith('ordenes')) && sh.jev.asked[0].some((i) => i.endsWith('turno')), `la ruta y la señal no fueron en una sola petición (peticiones: ${sh.jev.calls})`);
+
+    await set(withJev, false, false, false);
+    must((await turn(withJev, { route: 'charla' })).first.tools.length === 5, 'con el ajuste de grupos apagado se quitaron herramientas');
+
+    await set(withJev, false, true, true);
+    const ch = await turn(withJev, { route: 'charla' });
+    must(ch.first.tools.join() === 'registrar_interesado,portafolio', `ruta "charla" activa: llegaron ${ch.first.tools.join(', ')}`);
+    must((await turn(withJev, { route: 'herramienta' })).first.tools.length === 5, 'ruta "herramienta": debían ir todas');
+    const late = await turn(withJev, { route: 'charla', delay: 3000 });
+    must(late.first.tools.length === 5 && late.ms < 1500, `ruta tardía: se esperó por ella (${late.ms} ms) o se aplicó sin haber llegado`);
+    must(!(await turn(withJev, { route: 'encargo' })).first.model, 'el modelo capaz se usó en una sesión pública');
+    must((await turn(withJev, { route: 'encargo', owner: true })).first.model === 'capaz', 'encargo del dueño con el ajuste encendido: no usó el modelo capaz');
+    const fb = await turn(withJev, { route: 'encargo', owner: true, capableFails: true });
+    must(fb.seen.length === 2 && fb.seen[0].model === 'capaz (falló)' && !fb.seen[1].model, `si el modelo capaz falla, el turno debe seguir con el de siempre (peticiones: ${fb.seen.map((x) => x.model ?? 'normal').join(' → ')})`);
+    must(!(await turn(withJev, { route: 'herramienta', owner: true })).first.model, 'el modelo capaz se usó en un turno del dueño que no era un encargo');
+    await set(withJev, false, true, false);
+    must(!(await turn(withJev, { route: 'encargo', owner: true })).first.model, 'el modelo capaz se usó con su ajuste apagado');
+
+    const before = (await noJev.decisions.list(500, 'ruta')).length;
+    await set(noJev, false, true, true); const nj = await turn(noJev, { route: 'charla' });
+    const after = (await noJev.decisions.list(500, 'ruta')).length;
+    must(nj.first.tools.length === 5 && after === before, `sin Jev no debe haber ruta: herramientas ${nj.first.tools.length} de 5, decisiones de ruta ${before} → ${after}`);
+    await set(withJev, true, false, false);
+    return `ruta tardía: la respuesta salió en ${late.ms} ms sin esperarla`;
+  });
+
+  // ---------- Modelo capaz: conectores ----------
+  const sse = (lines: unknown[]) => new Response(lines.map((l) => `data: ${typeof l === 'string' ? l : JSON.stringify(l)}\n\n`).join(''), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const collect = async (gen: AsyncGenerator<any>) => { let text = '', calls: any[] = []; for await (const ev of gen) { if (ev.type === 'text') text += ev.delta; else calls = ev.calls; } return { text, calls }; };
+
+  await check('Modelo capaz, formato OpenAI: texto, herramientas en trozos y petición mínima si rechaza campos', async () => {
+    const bodies: any[] = [];
+    capableFetch = (_u, body) => { bodies.push(body);
+      if (body.stream_options) return new Response(JSON.stringify({ error: { message: 'unknown field stream_options' } }), { status: 400 });
+      return sse([{ choices: [{ delta: { content: 'Va ' } }] }, { choices: [{ delta: { content: 'bien.' } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'programar', arguments: '{"proy' } }] } }] }, { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'ecto":"x"}' } }] } }] },
+        { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } }, '[DONE]']); };
+    const m = new CapableModelService(withJev.cfg, usage);
+    must(m.enabled && m.label === 'otro: modelo-capaz-de-prueba', `no quedó configurado: ${m.problem}`);
+    const r = await collect(m.chat([{ role: 'user', content: 'hola' }], [{ type: 'function', function: { name: 'programar', parameters: {} } }]));
+    must(r.text === 'Va bien.' && r.calls.length === 1 && r.calls[0].name === 'programar' && JSON.parse(r.calls[0].arguments).proyecto === 'x', `resultado: ${JSON.stringify(r)}`);
+    must(bodies.length === 2 && bodies[0].stream_options && !bodies[1].stream_options && bodies[1].model === 'modelo-capaz-de-prueba' && bodies[1].tools.length === 1, 'tras el rechazo no repitió con el cuerpo mínimo');
+    await collect(m.chat([{ role: 'user', content: 'otra' }], [])); must(bodies.length === 3 && !bodies[2].stream_options, 'no recordó que ese proveedor pide el cuerpo mínimo');
+    must(sent.every((u) => !u.includes('api.deepseek.com')), 'el modelo capaz no debe tocar DeepSeek');
+    capableFetch = undefined;
+    return 'rechazo con 400 → repite sin campos opcionales y lo recuerda';
+  });
+
+  await check('Modelo capaz, Anthropic: el historial y las herramientas se convierten bien', async () => {
+    const conv = toAnthropic([{ role: 'system', content: 'Eres Javier.' }, { role: 'assistant', content: 'Hola.' }, { role: 'user', content: 'Programa una landing' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'c1', function: { name: 'programar', arguments: '{"proyecto":"cafe"}' } }, { id: 'c2', function: { name: 'musica', arguments: 'no es json' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'Empezó.' }, { role: 'tool', tool_call_id: 'c2', content: 'Suena.' }, { role: 'user', content: '¿Cómo va?' }] as any);
+    must(conv.system === 'Eres Javier.' && conv.messages[0].role === 'user', 'el system no quedó aparte o no empieza por el usuario');
+    const roles = conv.messages.map((x) => x.role).join(',');
+    must(roles === 'user,assistant,user,assistant,user', `roles sin alternar: ${roles}`);
+    const use: any = conv.messages[3].content, res: any = conv.messages[4].content;
+    must(use[0].type === 'tool_use' && use[0].input.proyecto === 'cafe' && use[1].id === 'c2' && JSON.stringify(use[1].input) === '{}', 'tool_use mal convertido');
+    must(res[0].type === 'tool_result' && res[0].tool_use_id === 'c1' && res[1].tool_use_id === 'c2' && res[2].type === 'text', 'tool_result mal convertido o separado de su mensaje');
+    const kept = new Map<string, unknown[]>([['c1', [{ type: 'thinking', thinking: 'x', signature: 's' }, { type: 'tool_use', id: 'c1', name: 'programar', input: {} }]]]);
+    const again = toAnthropic([{ role: 'user', content: 'a' }, { role: 'assistant', content: null, tool_calls: [{ id: 'c1', function: { name: 'programar', arguments: '{}' } }] }] as any, kept);
+    must((again.messages[1].content[0] as any).type === 'thinking', 'no devolvió los bloques originales de la respuesta anterior de Anthropic');
+
+    process.env.MODELO_CAPAZ_PROVEEDOR = 'anthropic'; process.env.MODELO_CAPAZ_URL = ''; process.env.MODELO_CAPAZ = 'modelo-de-prueba';
+    const m = new CapableModelService(new ConfigService(), usage); let body: any;
+    const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    capableFetch = (_u, b) => { body = b; return new Response(
+      ev('message_start', { message: { id: 'm1', type: 'message', role: 'assistant', model: 'x', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 9, output_tokens: 0 } } }) +
+      ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }) + ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'Ya lo encargo.' } }) + ev('content_block_stop', { index: 0 }) +
+      ev('content_block_start', { index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'programar', input: {} } }) + ev('content_block_delta', { index: 1, delta: { type: 'input_json_delta', partial_json: '{"proyecto":"cafe"}' } }) + ev('content_block_stop', { index: 1 }) +
+      ev('message_delta', { delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 12 } }) + ev('message_stop', {}), { status: 200, headers: { 'content-type': 'text/event-stream' } }); };
+    const r = await collect(m.chat([{ role: 'system', content: 'Eres Javier.' }, { role: 'user', content: 'Programa una landing' }], [{ type: 'function', function: { name: 'programar', description: 'Encarga', parameters: { type: 'object', properties: {} } } }]));
+    Object.assign(process.env, { MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ_URL: 'https://modelo-capaz.invalid/v1', MODELO_CAPAZ: 'modelo-capaz-de-prueba' }); capableFetch = undefined;
+    must(r.text === 'Ya lo encargo.' && r.calls[0]?.id === 'toolu_1' && JSON.parse(r.calls[0].arguments).proyecto === 'cafe', `respuesta del SDK: ${JSON.stringify(r)}`);
+    must(body.system === 'Eres Javier.' && body.tools[0].name === 'programar' && body.tools[0].input_schema && body.stream === true && body.messages[0].role === 'user', 'la petición a Anthropic no tiene la forma esperada');
+    return 'conversión del historial y una respuesta simulada por el SDK oficial';
+  });
+
+  await check('Modelo capaz mal configurado: queda apagado y dice por qué', async () => {
+    const mk = (env: Record<string, string>) => { const old = { ...process.env }; Object.assign(process.env, env); try { return new CapableModelService(new ConfigService(), usage); } finally { for (const k of Object.keys(env)) process.env[k] = old[k]; } };
+    must(!mk({ MODELO_CAPAZ_PROVEEDOR: '', MODELO_CAPAZ: '' }).enabled, 'sin configurar debía quedar apagado');
+    must(/uno de/.test(mk({ MODELO_CAPAZ_PROVEEDOR: 'inventado' }).problem), 'no avisó de un proveedor desconocido');
+    must(/MODELO_CAPAZ_KEY/.test(mk({ MODELO_CAPAZ_PROVEEDOR: 'openai', MODELO_CAPAZ_KEY: '' }).problem), 'no avisó de la clave que falta');
+    must(/MODELO_CAPAZ_URL/.test(mk({ MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ_URL: '' }).problem), 'no avisó de la dirección que falta');
+    must(mk({ MODELO_CAPAZ_PROVEEDOR: 'deepseek', MODELO_CAPAZ_KEY: '', MODELO_CAPAZ_URL: '' }).enabled, 'con deepseek debía servir la clave de DeepSeek');
+  });
+
+  await check('Ruta: se mide contra las herramientas que el modelo usó de verdad', async () => {
+    const s0 = await withJev.decisions.routeStats(), n0 = s0.n;
+    for (const [route, used] of [['charla', []], ['charla', ['clima']], ['herramienta', []], ['herramienta', ['clima']]] as const) {
+      withJev.decisions.useProviders(fake('jev', { answers: { ordenes: { value: false, confidence: 0.99 }, turno: { value: route, confidence: 0.9 } } }), fake('deepseek', {}));
+      const sc = withJev.guard.screen('¿Cómo está el clima hoy por allá?', 'prueba', 'publico'); await sc.blocks('registrar_interesado'); sc.done([...used]);
+    }
+    await wait(200);
+    const st = await withJev.decisions.routeStats();
+    const d = { right: st.right - s0.right, missed: st.missed - s0.missed, extra: st.extra - s0.extra };
+    must(st.n - n0 === 4 && d.right === 2 && d.missed === 1 && d.extra === 1, `cuentas: ${JSON.stringify(d)}`);
+    return `de 4 turnos de prueba: ${d.right} aciertos, ${d.missed} sin la herramienta que hacía falta, ${d.extra} con herramientas de sobra`;
   });
 
   await check('Inyección: en modo sombra no bloquea, y con el proveedor caído la conversación sigue', async () => {

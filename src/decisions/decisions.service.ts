@@ -10,7 +10,14 @@ import { DeepSeekProvider, JevProvider } from './providers';
 import { KINDS } from './questions';
 
 export interface DecideOptions { /** A quien o a que se refiere (una sesion, un contacto ya anonimizado). Solo para el registro. */ subject?: string; budgetMs?: number }
-export interface Decision<Q extends Questions> { id: Promise<number | null>; answers: Answers<Q>; shadow: boolean; ms: number }
+export interface Decision<Q extends Questions> {
+  id: Promise<number | null>;
+  /** Lo que debe usar quien llama. En modo sombra son los valores por defecto. */
+  answers: Answers<Q>;
+  /** Lo que se decidio de verdad (en sombra difiere de `answers`). Solo para medir y mostrar, no para actuar. */
+  decided: Answers<Q>;
+  shadow: boolean; ms: number;
+}
 
 /**
  * Capa de decisiones (etapa 1a, pedida por Javier el 2026-11-18): el unico lugar por donde pasan las decisiones. Quien
@@ -57,51 +64,72 @@ export class DecisionsService implements OnModuleInit, OnModuleDestroy {
   threshold(kind: string) { return this.settings.number(`decisiones.umbral.${kind}`); }
   inShadow(kind: string) { return this.graded && this.settings.boolean(`decisiones.sombra.${kind}`); }
 
+  /** Una decision de un solo tipo. */
   async decide<Q extends Questions>(kind: string, state: unknown, questions: Q, opts: DecideOptions = {}): Promise<Decision<Q>> {
-    const t0 = Date.now(), def = this.kinds.get(kind), budget = opts.budgetMs ?? def?.budgetMs ?? 800, shadow = this.inShadow(kind);
-    const ids = Object.keys(questions), raw: Record<string, RawAnswer & { by: Provider; backup: boolean }> = {};
-    const deadline = AbortSignal.timeout(budget);
-    let error = '', tokens = 0, usedBackup = false, primaryAnswers: Record<string, RawAnswer> = {};
+    return (await this.decideMany(state, { [kind]: questions } as Record<string, Q>, opts))[kind];
+  }
+
+  /**
+   * Varios tipos de decision sobre el MISMO estado en una sola peticion al proveedor (por ejemplo la ruta del turno y la
+   * señal de inyeccion). Cada tipo conserva su umbral, su modo sombra, su presupuesto de tiempo y su fila en el registro.
+   */
+  async decideMany<S extends Record<string, Questions>>(state: unknown, sets: S, opts: DecideOptions = {}): Promise<{ [K in keyof S]: Decision<S[K]> }> {
+    const t0 = Date.now(), kinds = Object.keys(sets), SEP = '__';
+    const budgetOf = (kind: string) => opts.budgetMs ?? this.kinds.get(kind)?.budgetMs ?? 800;
+    const flat: Questions = {};
+    for (const kind of kinds) for (const [id, q] of Object.entries(sets[kind])) flat[kind + SEP + id] = q;
+    const deadline = AbortSignal.timeout(Math.max(...kinds.map(budgetOf)));
+    let primaryError = '', primaryTokens = 0, primaryAnswers: Record<string, RawAnswer> = {};
     try {
-      const r = await within(this.primary.ask(state, questions, deadline), deadline);
-      tokens += r.tokens; primaryAnswers = r.answers;
-      for (const id of ids) if (r.answers[id]) raw[id] = { ...r.answers[id], by: this.primary.name, backup: false };
-    } catch (e) { error = this.note(this.primary.name, e); }
+      const r = await within(this.primary.ask(state, flat, deadline), deadline);
+      primaryTokens = r.tokens; primaryAnswers = r.answers;
+    } catch (e) { primaryError = this.note(this.primary.name, e); }
 
-    // Respaldo: lo que el principal no respondio o respondio con confianza baja. En modo sombra se consulta aparte, sin prisa.
-    const weak = !this.backup ? [] : ids.filter((id) => !raw[id] || (raw[id].confidence !== null && raw[id].confidence! < this.threshold(kind)));
-    if (weak.length && this.backup && !shadow) {
-      try {
-        const r = await within(this.backup.ask(state, Object.fromEntries(weak.map((id) => [id, questions[id]])), deadline), deadline);
-        tokens += r.tokens;
-        for (const id of weak) {
-          if (!r.answers[id]) continue;
-          const q = questions[id], first = raw[id];
-          // Conservadora: el "si" de cualquiera de los dos gana; el dudoso del principal no se pierde por un "no" del respaldo.
-          if (q.type === 'yesno' && q.conservative && first?.value === true) raw[id] = { ...first, backup: true };
-          else raw[id] = { ...r.answers[id], by: this.backup.name, backup: true };
-          usedBackup = true;
-        }
-      } catch (e) { error ||= this.note(this.backup.name, e); }
-    }
+    const one = async (kind: string): Promise<Decision<Questions>> => {
+      const questions = sets[kind], ids = Object.keys(questions), def = this.kinds.get(kind), shadow = this.inShadow(kind);
+      const mine: Record<string, RawAnswer> = {}, raw: Record<string, RawAnswer & { by: Provider; backup: boolean }> = {};
+      for (const id of ids) { const a = primaryAnswers[kind + SEP + id]; if (a) { mine[id] = a; raw[id] = { ...a, by: this.primary.name, backup: false }; } }
+      let error = primaryError, tokens = Math.round(primaryTokens / kinds.length), usedBackup = false;
 
-    const decided = {} as Record<string, Answer>, effective = {} as Record<string, Answer>;
-    let defaulted = false;
-    for (const id of ids) {
-      decided[id] = raw[id] ?? { value: questions[id].fallback, confidence: null, by: 'defecto', backup: false };
-      if (!raw[id]) defaulted = true;
-      // En sombra nada cambia para quien llama: recibe el valor por defecto, que es el comportamiento que ya tenia.
-      effective[id] = shadow ? { value: questions[id].fallback, confidence: null, by: 'defecto', backup: false } : decided[id];
-    }
-    const ms = Date.now() - t0;
-    this.usage.add('decisiones'); if (defaulted) this.usage.add('decisiones_defecto');
-    const row = { kind, subject: opts.subject ?? '', state, decided, usedBackup, defaulted, shadow, ms, tokens, error };
-    // En sombra se compara con el respaldo: siempre que el principal se aparte del valor por defecto (lo interesante) y, del
-    // resto, solo una muestra, para no duplicar el costo de lo que se evalua en cada turno.
-    const flagged = ids.some((i) => primaryAnswers[i] && primaryAnswers[i].value !== questions[i].fallback);
-    const compare = shadow && !!this.backup && (flagged || Math.random() < (def?.compareRate ?? 1));
-    const id = compare ? this.shadowCompare(row, questions, primaryAnswers) : this.save(row, null);
-    return { id, answers: effective as Answers<Q>, shadow, ms };
+      // Respaldo: lo que el principal no respondio o respondio con confianza baja. En modo sombra se consulta aparte, sin prisa.
+      const weak = !this.backup ? [] : ids.filter((id) => !raw[id] || (raw[id].confidence !== null && raw[id].confidence! < this.threshold(kind)));
+      if (weak.length && this.backup && !shadow) {
+        const left = AbortSignal.timeout(Math.max(1, budgetOf(kind) - (Date.now() - t0)));
+        try {
+          const r = await within(this.backup.ask(state, Object.fromEntries(weak.map((id) => [id, questions[id]])), left), left);
+          tokens += r.tokens;
+          for (const id of weak) {
+            if (!r.answers[id]) continue;
+            const q = questions[id], first = raw[id];
+            // Conservadora: el "si" de cualquiera de los dos gana; el dudoso del principal no se pierde por un "no" del respaldo.
+            if (q.type === 'yesno' && q.conservative && first?.value === true) raw[id] = { ...first, backup: true };
+            else raw[id] = { ...r.answers[id], by: this.backup.name, backup: true };
+            usedBackup = true;
+          }
+        } catch (e) { error ||= this.note(this.backup.name, e); }
+      }
+
+      const decided = {} as Record<string, Answer>, effective = {} as Record<string, Answer>;
+      let defaulted = false;
+      for (const id of ids) {
+        decided[id] = raw[id] ?? { value: questions[id].fallback, confidence: null, by: 'defecto', backup: false };
+        if (!raw[id]) defaulted = true;
+        // En sombra nada cambia para quien llama: recibe el valor por defecto, que es el comportamiento que ya tenia.
+        effective[id] = shadow ? { value: questions[id].fallback, confidence: null, by: 'defecto', backup: false } : decided[id];
+      }
+      const ms = Date.now() - t0;
+      this.usage.add('decisiones'); if (defaulted) this.usage.add('decisiones_defecto');
+      const row = { kind, subject: opts.subject ?? '', state, decided, usedBackup, defaulted, shadow, ms, tokens, error };
+      // En sombra se compara con el respaldo: siempre que el principal se aparte del valor por defecto (lo interesante) y, del
+      // resto, solo una muestra, para no duplicar el costo de lo que se evalua en cada turno.
+      const flagged = ids.some((i) => mine[i] && mine[i].value !== questions[i].fallback);
+      const rate = def?.compareRate ?? 1; // 0 = nunca: ese tipo se mide de otra forma (la ruta, contra lo que hizo el modelo)
+      const compare = shadow && !!this.backup && rate > 0 && (flagged || Math.random() < rate);
+      const id = compare ? this.shadowCompare(row, questions, mine) : this.save(row, null);
+      return { id, answers: effective as Answers<Questions>, decided: decided as Answers<Questions>, shadow, ms };
+    };
+    const out = await Promise.all(kinds.map(one));
+    return Object.fromEntries(kinds.map((k, i) => [k, out[i]])) as { [K in keyof S]: Decision<S[K]> };
   }
 
   /** Modo sombra: el respaldo responde lo mismo, sin limite corto de tiempo, y se anota si coincidieron. */
@@ -161,6 +189,26 @@ export class DecisionsService implements OnModuleInit, OnModuleDestroy {
         ok: mine.filter((r) => r.mark === 'ok').length, bad: mine.filter((r) => r.mark === 'mal').length };
     });
     return { provider: this.primary.name, model: this.primary.name === 'jev' ? this.cfg.jevModel : this.cfg.deepseekModel, backup: this.backup?.name ?? null, graded: this.graded, days, kinds };
+  }
+
+  /**
+   * Aciertos de la ruta contra lo que de verdad paso en cada turno (ultimos dias). `missed` es el error que importa: la
+   * ruta dijo que no hacia falta herramienta y el modelo si uso una. `extra`: pidio herramientas que no se usaron (inofensivo).
+   */
+  async routeStats(days = 14) {
+    const rows = await this.db.query<{ detail: string; outcome: string }>(`SELECT detail, outcome FROM decisions WHERE business = $1 AND kind = 'ruta' AND outcome <> '' AND at >= $2`, [this.cfg.businessId, new Date(Date.now() - days * 86_400_000).toISOString()]);
+    const out = { days, n: 0, right: 0, missed: 0, extra: 0, jobs: 0, jobsRight: 0, examples: [] as string[] };
+    for (const r of rows) {
+      let d: any; try { d = JSON.parse(r.detail); } catch { continue; }
+      const a = d.turno ?? d.turno_dueno; if (!a || a.by === 'defecto') continue;
+      const said = String(a.value), real = r.outcome.split(':')[0], needsTool = real !== 'charla', saidTool = said === 'herramienta' || said === 'encargo';
+      out.n++;
+      if (needsTool && !saidTool) { out.missed++; if (out.examples.length < 5) out.examples.push(`dijo "${said}" y se usó ${r.outcome}`); }
+      else if (!needsTool && saidTool) out.extra++;
+      else out.right++;
+      if (real === 'encargo') { out.jobs++; if (said === 'encargo') out.jobsRight++; }
+    }
+    return out;
   }
 
   private async prune() {

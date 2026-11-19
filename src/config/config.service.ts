@@ -59,6 +59,13 @@ export class ConfigService {
   /** Jev (TypeSafe) decide si hay clave; sin ella la capa de decisiones usa DeepSeek. */
   readonly jevApiKey: string;
   readonly jevModel: string;
+  /** Modelo capaz para encargos largos del dueño, de cualquier proveedor (ver llm/capable.service.ts). Sin proveedor = no existe. */
+  readonly capableProvider: string;
+  readonly capableModel: string;
+  readonly capableKey: string;
+  readonly capableUrl: string;
+  /** Campos extra para el cuerpo de la peticion (JSON), por ejemplo {"reasoning_effort":"low"}. */
+  readonly capableExtra: Record<string, unknown>;
   /** Dias que se conserva el registro de decisiones. */
   readonly decisionsKeepDays: number;
   /** Quien responde los mensajes de WhatsApp: 'avatar' (por defecto), 'n8n' (se reenvian a N8N_WEBHOOK_URL) u 'off'. */
@@ -206,6 +213,14 @@ export class ConfigService {
     this.businessId = str('BUSINESS_ID', 'principal').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'principal';
     this.jevApiKey = str('JEV_API_KEY');
     this.jevModel = str('JEV_MODEL', 'jev-1.14.0');
+    this.capableProvider = str('MODELO_CAPAZ_PROVEEDOR').toLowerCase();
+    this.capableModel = str('MODELO_CAPAZ');
+    this.capableKey = str('MODELO_CAPAZ_KEY');
+    this.capableUrl = str('MODELO_CAPAZ_URL').replace(/\/+$/, '');
+    let extra: unknown = {};
+    try { extra = JSON.parse(str('MODELO_CAPAZ_EXTRA') || '{}'); } catch { throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON, por ejemplo {"reasoning_effort":"low"}'); }
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON');
+    this.capableExtra = extra as Record<string, unknown>;
     this.decisionsKeepDays = int('DECISIONS_KEEP_DAYS', 90, 1);
     const replies = str('WHATSAPP_REPLIES', 'avatar').toLowerCase();
     this.whatsappReplies = replies === 'n8n' || replies === 'off' ? replies : 'avatar';

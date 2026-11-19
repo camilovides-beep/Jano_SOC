@@ -146,6 +146,7 @@ npm run conocimiento              # carga conocimiento/publico y conocimiento/pr
 npm run restaurar -- <respaldo>   # restaura un respaldo en una base vacía
 npm run verificar                 # comprueba en simulación las reglas de seguridad y decisiones
 npm run latencia                  # mide la latencia de voz contra el servidor en marcha
+npm run probar-modelo             # prueba de verdad el modelo capaz configurado (pregunta + herramienta)
 ```
 
 ## Variables de entorno
@@ -157,7 +158,12 @@ Todas están documentadas en [`.env.example`](.env.example). Para conversar solo
 | `DEEPGRAM_API_KEY` | Escuchar (voz a texto). |
 | `DEEPSEEK_API_KEY` | Pensar (modelo y herramientas). |
 
-Sin `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` el avatar habla con la voz del navegador. Lo demás se enciende al
+Sin `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` el avatar habla con la voz del navegador.
+
+**Modelo capaz (opcional).** Para los encargos largos del dueño se puede usar un segundo modelo de otro proveedor:
+`MODELO_CAPAZ_PROVEEDOR` (`deepseek`, `openai`, `gemini`, `kimi`, `grok`, `anthropic` u `otro` para cualquier API
+compatible con OpenAI), `MODELO_CAPAZ` y `MODELO_CAPAZ_KEY`. Nunca se usa con visitantes, y si falla el turno sigue con
+el modelo de siempre. Lo demás se enciende al
 configurar su clave: `OWNER_SECRET` (modo dueño), `DATABASE_URL` (PostgreSQL; sin ella usa SQLite), Telegram,
 WhatsApp, Qdrant, YouTube, Unsplash y el taller.
 

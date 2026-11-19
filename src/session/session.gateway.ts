@@ -18,6 +18,7 @@ import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { asData, DEMO_TURNS, DemoState, ToolsService } from '../tools/tools.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
+import { CapableModelService } from '../llm/capable.service';
 import { OptOutService } from '../security/optout.service';
 import { BLOCKED_NOTE, InjectionGuard, Screen } from '../security/injection.guard';
 import { VisitsService } from '../visits/visits.service';
@@ -36,6 +37,7 @@ interface Turn {
   ttsActive: number; ttsWaiters: (() => void)[]; // control de peticiones de voz simultaneas
   lang: string;          // idioma de la respuesta (el de la ultima frase del usuario)
   sceneLocked?: boolean; // una herramienta ya puso el fondo de este turno (el del clima manda sobre el del modelo)
+  capable?: boolean;     // este turno lo responde el modelo capaz (encargo largo del dueño); se decide en la primera peticion
   screen?: Screen;       // señal de inyeccion de este turno (solo conversaciones publicas)
   tainted?: boolean;     // en este turno el modelo ya leyo texto de terceros: no puede ejecutar acciones (GATED)
   tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
@@ -225,7 +227,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly ownerAuth: OwnerService, private readonly cards: CardsService, private readonly memory: MemoryService,
     private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService, private readonly leads: LeadsService, private readonly images: ImagesService, private readonly alerts: AlertsService,
     private readonly portfolio: PortfolioService, private readonly visits: VisitsService,
-    private readonly optout: OptOutService, private readonly guard: InjectionGuard,
+    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly capable: CapableModelService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -558,6 +560,21 @@ export class SessionGateway implements OnGatewayConnection {
       }
     })().catch((e) => { spec.err = e as Error; }).finally(() => { spec.done = true; spec.wake?.(); });
   }
+  /**
+   * El turno lo responde el modelo capaz. Si falla ANTES de empezar a responder (clave mala, proveedor caido, peticion
+   * rechazada), ese turno sigue con el modelo de siempre: un modelo opcional no puede dejar al avatar sin responder.
+   */
+  private async *viaCapable(s: Session, turn: Turn, view: unknown[], defs: unknown[]): AsyncGenerator<LlmEvent> {
+    let started = false;
+    try { for await (const ev of this.capable.chat(view, defs, turn.ctrl.signal, 4000)) { started = true; yield ev; } return; }
+    catch (e) {
+      if (started || turn.ctrl.signal.aborted) throw e;
+      this.log.warn(`sesion #${s.n}: el modelo capaz falló (${(e as Error).message.slice(0, 200)}); sigue el modelo de siempre`);
+      this.alerts.report('Modelo capaz', (e as Error).message);
+      turn.capable = false;
+    }
+    yield* this.llm.chat(view, defs, turn.ctrl.signal, 2000);
+  }
   private async *drain(spec: Spec): AsyncGenerator<LlmEvent> {
     for (let i = 0; ; ) {
       while (i < spec.events.length) yield spec.events[i++];
@@ -586,7 +603,8 @@ export class SessionGateway implements OnGatewayConnection {
         : `\n\n(Nota del sistema: demostración en curso, intervención ${s.demo.turns} de ${DEMO_TURNS}. Sigues siendo el asistente de "${s.demo.business}" atendiendo a un cliente; no eres Javier. Si la persona pide parar o vuelve a hablar de contratar a Javier, llama a demo con accion terminar.)`;
     }
     // Señal de inyeccion: se evalua en paralelo con la respuesta y solo se consulta si el turno va a ejecutar una herramienta con efectos.
-    if (!auto && !s.owner) turn.screen = this.guard.screen(userText, s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio');
+    if (!auto) turn.screen = this.guard.screen(userText, s.owner ? 'una sesión del dueño' : s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio', s.owner ? 'dueno' : 'publico');
+    const toolsUsed: string[] = [];
     const userEntry = { role: 'user', content: auto ? userText : userMsg(userText, lang) + demoNote };
     s.history.push(userEntry);
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
@@ -602,7 +620,11 @@ export class SessionGateway implements OnGatewayConnection {
           const ctx = auto || s.demo.on ? '' : await this.context(s, userText); // en una demostracion no se mezcla lo que se sabe de Javier
           const view = ctx ? s.history.map((m) => (m === userEntry ? { ...m, content: m.content + ctx } : m)) : s.history;
           // En modo dueño el encargo para el taller va completo en los argumentos de la herramienta: necesita mas espacio.
-          source = this.llm.chat(view, await this.tools.definitions(s.owner), turn.ctrl.signal, s.owner ? 2000 : 400);
+          // Ruta del turno (1c): solo en la primera peticion, solo si YA llego y Javier la activo; si no, todo va como siempre.
+          const route = round === 0 ? turn.screen?.route() : undefined;
+          if (round === 0) turn.capable = this.guard.useCapable(route, s.owner);
+          const defs = this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
+          source = turn.capable ? this.viaCapable(s, turn, view, defs) : this.llm.chat(view, defs, turn.ctrl.signal, s.owner ? 2000 : 400);
         }
         for await (const ev of source) {
           if (ev.type === 'tool_calls') { toolCalls = ev.calls; continue; }
@@ -620,6 +642,7 @@ export class SessionGateway implements OnGatewayConnection {
         // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
         if (!turn.spoken) this.say(client, s, turn, turn.lang !== 'es' ? (FILLER_OTHER[turn.lang] ?? 'One moment.') : FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
         for (const c of toolCalls) {
+          toolsUsed.push(c.name);
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else if (c.name === 'buscar_imagenes' && !s.owner && s.imageSearches >= this.cfg.imagesPerSession) result = 'No se buscó: ya se mostraron varias tandas de imágenes en esta conversación. Dile que por ahora no puedes mostrar más.';
@@ -655,6 +678,7 @@ export class SessionGateway implements OnGatewayConnection {
         this.say(client, s, turn, 'Perdón, tuve un problema para responder. ¿Me lo repites?');
       }
     }
+    if (!turn.ctrl.signal.aborted) turn.screen?.done(toolsUsed); // lo que de verdad paso, para medir la ruta
     await this.finish(client, s, turn, hit ? 'turno (adelantado)' : 'turno');
   }
 

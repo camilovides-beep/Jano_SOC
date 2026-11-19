@@ -8,7 +8,7 @@ export const USAGE_KEYS = [
   'deepgram_s', 'deepgram_susp_s', 'deepgram_pre_s',
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
-  'jev_calls', 'jev_in', 'decisiones', 'decisiones_defecto',
+  'jev_calls', 'jev_in', 'capaz_calls', 'capaz_in', 'capaz_out', 'decisiones', 'decisiones_defecto',
   'nvidia_calls', 'youtube_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations',
   'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd',
 ] as const;
@@ -77,6 +77,7 @@ export class UsageService implements OnModuleDestroy {
         (d.deepseek_sin_dato ? `; ${n(d.deepseek_sin_dato)} llamadas se cortaron sin dato de tokens` : ''));
     }
     if (d.jev_calls) parts.push(`decisiones con Jev ${n(d.jev_calls)} (${n(d.jev_in)} tokens)`);
+    if (d.capaz_calls) parts.push(`modelo capaz ${n(d.capaz_calls)} llamadas (${n(d.capaz_in)} tokens leídos, ${n(d.capaz_out)} escritos)`);
     if (d.eleven_chars) parts.push(`voz (ElevenLabs) ${n(d.eleven_chars)} caracteres`);
     if (d.nvidia_calls) parts.push(`búsquedas en la base de conocimiento ${n(d.nvidia_calls)}`);
     if (d.wa_out) parts.push(`mensajes de WhatsApp respondidos ${n(d.wa_out)}`);

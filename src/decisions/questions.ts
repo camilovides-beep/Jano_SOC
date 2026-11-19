@@ -6,7 +6,9 @@ import { KindDef, Questions } from './decisions.types';
  * Las instrucciones van en español: es el idioma de casi todo lo que se evalua.
  */
 export const KINDS = {
-  ruta: { label: 'Enrutamiento del turno', threshold: 0.6, shadow: true, budgetMs: 400 },
+  // Ruta (1c): solo con Jev y en sombra. Datos del 2026-11-18: quitar herramientas no acelera el primer token y el modelo
+  // capaz tarda ~280 ms mas; por eso se mide primero contra lo que de verdad paso en cada turno.
+  ruta: { label: 'Enrutamiento del turno', threshold: 0.6, shadow: true, budgetMs: 400, compareRate: 0 },
   // Seguridad (1b). Umbral 0,4 de confianza = probabilidad por encima de 0,7 o por debajo de 0,3: en el medio hay duda y se
   // consulta tambien al respaldo. "No contactar" actua desde el primer dia (decision de Javier: en sombra no marcaria a
   // nadie y un falso positivo se desmarca en el panel); la inyeccion empieza en sombra para revisar casos reales antes.
@@ -20,6 +22,11 @@ export const QUESTIONS = {
     turno: { type: 'choice', ask: '¿Qué tipo de turno es lo último que dijo la persona a un asistente de voz?', fallback: 'herramienta',
       options: { charla: 'Un saludo, una despedida, un comentario o charla que no necesita ningún dato', sencilla: 'Una pregunta que el asistente responde con lo que ya sabe, sin consultar nada',
         herramienta: 'Necesita un dato en vivo o una acción: hora, clima, dólar, guardar datos de contacto, mostrar imágenes, un caso del portafolio o una demostración' } },
+    // Sesion del dueño: las mismas clases y una mas, el encargo largo (el unico caso en que se usaria el modelo mas capaz).
+    turno_dueno: { type: 'choice', ask: '¿Qué tipo de turno es lo último que le dijo el dueño a su asistente de voz?', fallback: 'herramienta',
+      options: { charla: 'Un saludo, una despedida, un comentario o charla que no necesita ningún dato', sencilla: 'Una pregunta que el asistente responde con lo que ya sabe, sin consultar nada',
+        herramienta: 'Necesita un dato o una acción corta: hora, clima, interesados, consumo, resumen del día, música, imágenes, estado del taller, tareas en Plane',
+        encargo: 'Encarga un trabajo largo de programación o diseño: crear o cambiar un sitio, una página, una aplicación o unos bocetos, con varios requisitos' } },
   },
   no_contactar: {
     pidio: { type: 'yesno', ask: '¿La persona pidió que no la vuelvan a contactar, llamar o escribir, o dijo que no le interesa y que la dejen en paz?', fallback: false, conservative: true,

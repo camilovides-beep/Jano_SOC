@@ -40,7 +40,7 @@ export interface KindDef {
   shadow: boolean;
   /** Tiempo maximo de toda la decision, con respaldo incluido. Pasado ese tiempo se aplica el valor por defecto. */
   budgetMs: number;
-  /** En modo sombra, parte de las decisiones (0 a 1) que se comparan con el respaldo. Las que difieren del valor por defecto se comparan siempre. Sin dato = todas. */
+  /** En modo sombra, parte de las decisiones (0 a 1) que se comparan con el respaldo. Las que difieren del valor por defecto se comparan siempre. Sin dato = todas; 0 = ninguna. */
   compareRate?: number;
 }
 

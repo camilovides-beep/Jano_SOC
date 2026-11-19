@@ -1,0 +1,167 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import Anthropic from '@anthropic-ai/sdk';
+import { ConfigService } from '../config/config.service';
+import { UsageService } from '../usage/usage.service';
+import { LlmEvent, ToolCall } from './deepseek.service';
+
+/** Un proveedor conocido: donde queda su API, con que formato habla y como se le pide el tope de salida. */
+interface Preset { url: string; format: 'openai' | 'anthropic'; tokensField: string; extra?: Record<string, unknown>; verified: string }
+
+/**
+ * Proveedores del modelo capaz. Todos menos Anthropic hablan el formato "chat completions" de OpenAI.
+ * Lo que dice `verified` salio de la documentacion oficial leida el 2026-11-18; lo que no se pudo leer queda marcado y se
+ * comprueba con `npm run probar-modelo` (una pregunta y una herramienta reales contra el modelo configurado).
+ */
+export const PRESETS: Record<string, Preset> = {
+  deepseek: { url: 'https://api.deepseek.com', format: 'openai', tokensField: 'max_tokens', extra: { thinking: { type: 'disabled' } }, verified: 'documentación y llamadas reales' },
+  openai: { url: 'https://api.openai.com/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'SIN verificar: su referencia de la API no se dejó leer (403)' },
+  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', format: 'openai', tokensField: '', verified: 'dirección, clave Bearer, herramientas y streaming según su documentación; el tope de salida no está documentado (no se envía)' },
+  kimi: { url: 'https://api.moonshot.ai/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'dirección, streaming y herramientas según su documentación' },
+  grok: { url: 'https://api.x.ai/v1', format: 'openai', tokensField: '', verified: 'SIN verificar: su documentación solo describe otra API (Responses)' },
+  anthropic: { url: '', format: 'anthropic', tokensField: 'max_tokens', verified: 'guía del SDK oficial; sin probar con una clave real' },
+  otro: { url: '', format: 'openai', tokensField: '', verified: 'cualquier API compatible con OpenAI: hay que dar MODELO_CAPAZ_URL' },
+};
+
+/**
+ * El "modelo capaz" (etapa 1c, pedido por Javier el 2026-11-18): un segundo modelo, de CUALQUIER proveedor, que solo se
+ * usa en los encargos largos del dueño. Nunca en conversaciones publicas (tarda mas en empezar a responder).
+ * Se configura con MODELO_CAPAZ_PROVEEDOR + MODELO_CAPAZ + MODELO_CAPAZ_KEY; sin eso no existe y nada mas cambia.
+ * Recibe y devuelve lo mismo que DeepSeekService.chat (mensajes en formato OpenAI, eventos de texto y herramientas), asi
+ * el resto del codigo no sabe que modelo respondio. Si falla antes de empezar a responder, quien llama usa el de siempre.
+ */
+@Injectable()
+export class CapableModelService implements OnModuleInit {
+  private readonly log = new Logger(CapableModelService.name);
+  private readonly preset?: Preset;
+  private readonly url: string = '';
+  private readonly key: string = '';
+  private anthropic?: Anthropic;
+  /** Bloques completos de las respuestas de Anthropic que pidieron herramientas (incluyen su razonamiento): hay que devolverlos tal cual en la siguiente peticion del mismo turno. */
+  private readonly kept = new Map<string, unknown[]>();
+  /** Un proveedor que rechazo los campos opcionales: de ahi en adelante se le habla con el cuerpo minimo. */
+  private minimal = false;
+  readonly problem: string = '';
+
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {
+    const name = cfg.capableProvider;
+    if (!name && !cfg.capableModel) return;
+    const preset = PRESETS[name];
+    if (!preset) { this.problem = `MODELO_CAPAZ_PROVEEDOR debe ser uno de: ${Object.keys(PRESETS).join(', ')}`; return; }
+    if (!cfg.capableModel) { this.problem = 'falta MODELO_CAPAZ (el nombre del modelo)'; return; }
+    this.url = (cfg.capableUrl || preset.url).replace(/\/+$/, '');
+    this.key = cfg.capableKey || (name === 'deepseek' ? cfg.deepseekApiKey : '');
+    if (!this.key) { this.problem = 'falta MODELO_CAPAZ_KEY'; return; }
+    if (preset.format === 'openai' && !/^https:\/\//.test(this.url)) { this.problem = 'falta MODELO_CAPAZ_URL (debe empezar por https://)'; return; }
+    this.preset = preset;
+  }
+  onModuleInit() {
+    if (this.problem) this.log.warn(`modelo capaz sin configurar bien: ${this.problem}`);
+    else if (this.preset) this.log.log(`modelo capaz: ${this.label}`);
+  }
+
+  get enabled() { return !!this.preset; }
+  /** "proveedor: modelo", para el panel y los registros. */
+  get label() { return this.preset ? `${this.cfg.capableProvider}: ${this.cfg.capableModel}` : ''; }
+
+  /** Misma forma que DeepSeekService.chat. */
+  chat(messages: unknown[], tools: unknown[], signal?: AbortSignal, maxTokens = 4000): AsyncGenerator<LlmEvent> {
+    if (!this.preset) throw new Error('no hay modelo capaz configurado');
+    return this.preset.format === 'anthropic' ? this.chatAnthropic(messages as OpenAiMessage[], tools as OpenAiTool[], signal, maxTokens) : this.chatOpenAi(messages, tools, signal, maxTokens);
+  }
+
+  // ---- Formato OpenAI (chat completions con SSE) ----
+  private async *chatOpenAi(messages: unknown[], tools: unknown[], signal: AbortSignal | undefined, maxTokens: number): AsyncGenerator<LlmEvent> {
+    const base = { model: this.cfg.capableModel, messages, stream: true, ...(tools.length ? { tools } : {}) };
+    // Cuerpo completo: tope de salida, consumo en el ultimo fragmento y lo propio del proveedor. Si el proveedor lo rechaza
+    // con un 400 (cada uno acepta campos distintos), se repite una vez con el cuerpo minimo y se recuerda para las siguientes.
+    const full = { ...base, ...(this.preset!.tokensField ? { [this.preset!.tokensField]: maxTokens } : {}), stream_options: { include_usage: true }, ...this.preset!.extra, ...this.cfg.capableExtra };
+    const post = (body: unknown) => fetch(`${this.url}/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${this.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+    let res = await post(this.minimal ? { ...base, ...this.cfg.capableExtra } : full);
+    if (res.status === 400 && !this.minimal) {
+      const why = (await res.text().catch(() => '')).slice(0, 300);
+      this.log.warn(`${this.label} rechazó la petición completa (${why}); se repite con el cuerpo mínimo`);
+      this.minimal = true;
+      res = await post({ ...base, ...this.cfg.capableExtra });
+    }
+    if (!res.ok || !res.body) throw new Error(`${this.label} respondió ${res.status}: ${(await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)}`);
+    this.usage.add('capaz_calls');
+    const calls: ToolCall[] = [], decoder = new TextDecoder();
+    let pending = '';
+    for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {
+      pending += decoder.decode(part, { stream: true });
+      let nl: number;
+      while ((nl = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        let d: any; try { d = JSON.parse(data); } catch { continue; }
+        if (d.usage) { this.usage.add('capaz_in', Number(d.usage.prompt_tokens) || 0); this.usage.add('capaz_out', Number(d.usage.completion_tokens) || 0); }
+        const delta = d.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string' && delta.content) yield { type: 'text', delta: delta.content };
+        for (const tc of delta.tool_calls ?? []) {
+          // Casi todos mandan `index`; el que no, manda cada llamada completa con su id: una entrada nueva por id.
+          const i = Number.isInteger(tc.index) ? tc.index : tc.id ? calls.length : Math.max(0, calls.length - 1);
+          const c = (calls[i] ??= { id: '', name: '', arguments: '' });
+          if (tc.id) c.id = tc.id;
+          if (tc.function?.name) c.name = tc.function.name;
+          if (tc.function?.arguments) c.arguments += tc.function.arguments;
+        }
+      }
+    }
+    const ready = calls.filter((c) => c && c.name).map((c, i) => ({ ...c, id: c.id || `call_${Date.now()}_${i}` }));
+    if (ready.length) yield { type: 'tool_calls', calls: ready };
+  }
+
+  // ---- Anthropic (SDK oficial; su API usa otro formato de mensajes y de herramientas) ----
+  private async *chatAnthropic(messages: OpenAiMessage[], tools: OpenAiTool[], signal: AbortSignal | undefined, maxTokens: number): AsyncGenerator<LlmEvent> {
+    this.anthropic ??= new Anthropic({ apiKey: this.key, ...(this.cfg.capableUrl ? { baseURL: this.cfg.capableUrl } : {}) });
+    const { system, messages: msgs } = toAnthropic(messages, this.kept);
+    // El razonamiento viene activado por defecto en los modelos actuales y cuenta dentro de max_tokens: se deja espacio de sobra.
+    const stream = this.anthropic.messages.stream({
+      model: this.cfg.capableModel, max_tokens: Math.max(maxTokens, 16_000), ...(system ? { system } : {}), messages: msgs as Anthropic.MessageParam[],
+      ...(tools.length ? { tools: tools.map((t) => ({ name: t.function.name, description: t.function.description ?? '', input_schema: (t.function.parameters ?? { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema })) } : {}),
+      ...(this.cfg.capableExtra as object),
+    }, { signal });
+    for await (const ev of stream) if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta' && ev.delta.text) yield { type: 'text', delta: ev.delta.text };
+    const final = await stream.finalMessage();
+    this.usage.add('capaz_calls'); this.usage.add('capaz_in', final.usage.input_tokens); this.usage.add('capaz_out', final.usage.output_tokens);
+    const uses = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+    if (!uses.length) return;
+    this.kept.set(uses[0].id, final.content);
+    if (this.kept.size > 200) this.kept.delete(this.kept.keys().next().value!);
+    yield { type: 'tool_calls', calls: uses.map((b) => ({ id: b.id, name: b.name, arguments: JSON.stringify(b.input ?? {}) })) };
+  }
+}
+
+interface OpenAiTool { function: { name: string; description?: string; parameters?: unknown } }
+interface OpenAiMessage { role: string; content?: unknown; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string }
+
+/**
+ * Historial en formato OpenAI -> formato de Anthropic: los mensajes `system` van aparte; una respuesta con herramientas
+ * pasa a bloques `tool_use` (o a los bloques originales guardados, si esa respuesta fue de Anthropic); cada resultado
+ * `tool` pasa a un bloque `tool_result` dentro de un mensaje del usuario; los mensajes seguidos del mismo rol se unen.
+ */
+export function toAnthropic(messages: OpenAiMessage[], kept: Map<string, unknown[]> = new Map()): { system: string; messages: { role: 'user' | 'assistant'; content: unknown[] }[] } {
+  const system: string[] = [], out: { role: 'user' | 'assistant'; content: unknown[] }[] = [];
+  const text = (c: unknown) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (p?.type === 'text' ? p.text : '')).join('') : '');
+  const push = (role: 'user' | 'assistant', blocks: unknown[]) => { if (!blocks.length) return; const last = out[out.length - 1]; if (last?.role === role) last.content.push(...blocks); else out.push({ role, content: [...blocks] }); };
+  for (const m of messages) {
+    if (m.role === 'system') { const t = text(m.content).trim(); if (t) system.push(t); continue; }
+    if (m.role === 'tool') { push('user', [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: text(m.content) || '(sin resultado)' }]); continue; }
+    if (m.role === 'assistant') {
+      const saved = m.tool_calls?.length ? kept.get(m.tool_calls[0].id) : undefined;
+      if (saved) { push('assistant', saved); continue; }
+      const t = text(m.content).trim(), blocks: unknown[] = t ? [{ type: 'text', text: t }] : [];
+      for (const c of m.tool_calls ?? []) { let input: unknown = {}; try { input = JSON.parse(c.function.arguments || '{}'); } catch { /* argumentos mal formados: van vacios */ } blocks.push({ type: 'tool_use', id: c.id, name: c.function.name, input }); }
+      push('assistant', blocks);
+      continue;
+    }
+    const t = text(m.content).trim();
+    if (t) push('user', [{ type: 'text', text: t }]);
+  }
+  if (out[0]?.role !== 'user') out.unshift({ role: 'user', content: [{ type: 'text', text: '(Inicio de la conversación.)' }] }); // su API exige empezar por el usuario
+  return { system: system.join('\n\n'), messages: out };
+}

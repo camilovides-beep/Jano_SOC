@@ -11,12 +11,14 @@
     "conocimiento": "tsc -p tsconfig.json && node dist/knowledge/ingest.js",
     "restaurar": "node dist/db/restore.js",
     "verificar": "tsc -p tsconfig.json && node --no-warnings dist/verify/verify.js",
-    "latencia": "node scripts/latencia.mjs"
+    "latencia": "node scripts/latencia.mjs",
+    "probar-modelo": "tsc -p tsconfig.json && node --no-warnings dist/llm/probe.js"
   },
   "engines": {
     "node": ">=20.12"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@nestjs/common": "^12.5.0",
     "@nestjs/core": "^12.5.0",
     "@nestjs/platform-express": "^12.5.0",

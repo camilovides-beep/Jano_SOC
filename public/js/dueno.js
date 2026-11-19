@@ -303,7 +303,8 @@ function answerLine(id, a) {
 }
 async function patchSetting(key, value) { const r = await api('settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'no se guardó'); }
 async function loadDecisions() {
-  const { status, decisions } = await json('decisions');
+  const { status, decisions, route, settings, capableModel, capableProblem } = await json('decisions');
+  drawRoute(status, route, settings, capableModel, capableProblem);
   $('dec-provider').textContent = status.provider === 'jev' ? `Decide Jev (${status.model}), con DeepSeek de respaldo.` : `Decide DeepSeek (${status.model}). Jev está apagado: falta JEV_API_KEY.`;
   $('dec-note').textContent = status.graded ? 'Con confianza por debajo del umbral, la pregunta se repite al respaldo. En modo sombra Jev decide sin efecto y se compara con el respaldo.'
     : 'Sin Jev no hay umbrales de confianza ni modo sombra: quedan preparados y se activan solos al configurar la clave.';
@@ -333,6 +334,23 @@ async function loadDecisions() {
   }) : [el('li', { textContent: 'Todavía no hay decisiones registradas. Prueba una arriba.' })]));
 }
 const alertText = (t) => { $('dec-note').textContent = t; };
+function drawRoute(status, route, settings, capableModel, capableProblem) {
+  const kind = status.kinds.find((k) => k.kind === 'ruta');
+  if (!status.graded) { $('route-stats').textContent = 'Apagado: el enrutamiento solo existe con Jev (sin JEV_API_KEY no compensa su costo ni su latencia).'; $('route-note').textContent = ''; $('route-settings').replaceChildren(); return; }
+  const pct = (a) => (route.n ? Math.round((a / route.n) * 100) : 0);
+  $('route-stats').textContent = route.n
+    ? `${n(route.n)} turnos medidos: acertó ${n(route.right)} (${pct(route.right)} %); en ${n(route.missed)} (${pct(route.missed)} %) dijo que no hacía falta una herramienta y sí se usó; en ${n(route.extra)} (${pct(route.extra)} %) pidió herramientas de sobra.${route.jobs ? ` Encargos largos: reconoció ${n(route.jobsRight)} de ${n(route.jobs)}.` : ''}`
+    : 'Todavía no hay turnos medidos. Se llena solo con las conversaciones por voz.';
+  $('route-note').textContent = (kind?.shadow ? 'En modo sombra: Jev clasifica cada turno y se compara con lo que el modelo hizo de verdad, sin cambiar nada. ' : 'Activo. ')
+    + 'El error que importa es el primero (faltó una herramienta). Medición del 2026-11-18: enviar menos herramientas no acelera la voz; solo ahorra tokens.'
+    + (route.examples.length ? ` Ejemplos de fallo: ${route.examples.join('; ')}.` : '');
+  $('route-settings').replaceChildren(...settings.map((st) => {
+    const box = el('input', { type: 'checkbox', checked: st.value });
+    box.addEventListener('change', async () => { try { await patchSetting(st.key, box.checked); } catch (e) { box.checked = st.value; alertText(e.message); } });
+    const extra = st.key === 'ruta.modelo_capaz' ? (capableModel ? ` (${capableModel}; tarda más en empezar a responder)` : ` (sin efecto: ${capableProblem || 'no hay modelo capaz configurado; se define con MODELO_CAPAZ_PROVEEDOR, MODELO_CAPAZ y MODELO_CAPAZ_KEY'})`) : ' (charla y preguntas sencillas solo llevan registrar interesado y portafolio)';
+    return el('label', { className: 'row' }, box, el('span', { textContent: st.label + extra + (kind?.shadow ? ' — no actúa mientras la ruta esté en modo sombra' : '') }));
+  }));
+}
 $('dec-test').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const out = $('dec-test-out'); out.hidden = false; out.textContent = 'Decidiendo…';

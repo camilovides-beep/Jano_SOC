@@ -1,46 +1,95 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '../config/config.service';
 import { DecisionsService } from '../decisions/decisions.service';
 import { QUESTIONS } from '../decisions/questions';
+import { CapableModelService } from '../llm/capable.service';
 import { AlertsService } from '../ops/alerts.service';
+import { SettingsService } from '../settings/settings.service';
 
 /** Herramientas publicas que cambian algo (guardan datos, cambian el modo de la conversacion o gastan cupo). */
 export const EFFECT_TOOLS = new Set(['registrar_interesado', 'demo', 'buscar_imagenes']);
+/** Herramientas que no se quitan nunca aunque la ruta diga "charla": son las que consiguen clientes. */
+export const ALWAYS_TOOLS = new Set(['registrar_interesado', 'portafolio']);
+/** Herramientas que delatan un encargo largo (para medir si la ruta acerto). */
+const JOB_TOOLS = new Set(['programar', 'bocetos']);
+export type Route = 'charla' | 'sencilla' | 'herramienta' | 'encargo';
 
-/** La revision de un turno. `blocks()` dice si las herramientas con efectos deben quedarse sin correr en ese turno. */
-export interface Screen { blocks(tool: string): Promise<boolean> }
+/** La revision de un turno: la señal de inyeccion y, con Jev, la ruta. */
+export interface Screen {
+  /** ¿La herramienta debe quedarse sin correr en este turno? (señal de inyeccion; solo herramientas con efectos) */
+  blocks(tool: string): Promise<boolean>;
+  /** La ruta, SOLO si ya llego y esta activa; undefined = usar todo como siempre. Nunca espera. */
+  route(): Route | undefined;
+  /** Al terminar el turno: que herramientas uso de verdad el modelo, para medir los aciertos de la ruta. */
+  done(toolsUsed: string[]): void;
+}
 
 /**
- * Señal de inyeccion (etapa 1b). Es una señal ADICIONAL, no la defensa: la defensa es que el texto de afuera nunca se
- * obedece (reglas del prompt, `asData`, herramientas privadas solo en modo dueño). Lo que hace: si lo que dijo una
- * persona en una conversacion publica parece traer ordenes para una IA, en ese turno no corren las herramientas con
- * efectos y Javier recibe una alerta. La conversacion sigue.
- *  - Con Jev se evalua cada turno, en paralelo con la respuesta del modelo (no agrega espera: una herramienta nunca llega
- *    antes que la decision). Sin Jev se evalua solo cuando el turno esta por ejecutar una herramienta con efectos.
- *  - Si nadie responde a tiempo, la herramienta corre (valor por defecto de la pregunta) y queda anotado en el registro.
+ * Revision de cada turno (etapas 1b y 1c).
+ * Señal de inyeccion: es una señal ADICIONAL, no la defensa (la defensa es que el texto de afuera nunca se obedece). Si
+ * lo que dijo una persona en una conversacion publica parece traer ordenes para una IA, en ese turno no corren las
+ * herramientas con efectos y Javier recibe una alerta. La conversacion sigue.
+ * Ruta (solo con Jev): clasifica el turno en la MISMA peticion que la señal. Arranca en sombra: se registra y se compara
+ * con las herramientas que el modelo uso de verdad. Solo si Javier la activa en el panel sirve para enviar menos
+ * herramientas al modelo o, en encargos largos del dueño, usar el modelo mas capaz.
+ *  - Con Jev todo se evalua con el turno, en paralelo con la respuesta (no agrega espera). Sin Jev no hay ruta y la señal
+ *    se evalua solo cuando el turno esta por ejecutar una herramienta con efectos.
+ *  - Nada de esto se espera en serie: si la ruta no ha llegado cuando se arma la peticion al modelo, se usa todo.
  */
 @Injectable()
 export class InjectionGuard {
   private readonly log = new Logger(InjectionGuard.name);
   private lastAlert = 0; private muted = 0;
-  constructor(private readonly decisions: DecisionsService, private readonly alerts: AlertsService) {}
+  constructor(private readonly decisions: DecisionsService, private readonly alerts: AlertsService, private readonly settings: SettingsService, private readonly cfg: ConfigService, private readonly capable: CapableModelService) {
+    settings.define('ruta.grupos', { type: 'boolean', def: false, label: 'Enviar al modelo solo las herramientas de la ruta', group: 'ruta' });
+    settings.define('ruta.modelo_capaz', { type: 'boolean', def: false, label: 'Usar el modelo capaz en encargos largos del dueño', group: 'ruta' });
+  }
 
-  screen(text: string, subject: string): Screen {
-    const said = text.trim().slice(0, 4000);
-    let verdict: Promise<boolean> | undefined;
-    const run = () => (verdict ??= said.length < 8 ? Promise.resolve(false) : this.decisions.decide('inyeccion', said, QUESTIONS.inyeccion, { subject }).then(async (d) => {
-      const hit = d.answers.ordenes.value === true;
+  /** `who`: 'publico' revisa inyeccion (y ruta con Jev); 'dueno' solo ruta; 'chat' solo inyeccion (el chat escrito no enruta). */
+  screen(text: string, subject: string, who: 'publico' | 'dueno' | 'chat' = 'chat'): Screen {
+    const said = text.trim().slice(0, 4000), graded = this.decisions.graded;
+    const wantRoute = graded && who !== 'chat', wantInjection = who !== 'dueno';
+    const routeQ = who === 'dueno' ? { turno_dueno: QUESTIONS.ruta.turno_dueno } : { turno: QUESTIONS.ruta.turno };
+    let route: Route | undefined, routeId: Promise<number | null> | undefined, verdict: Promise<boolean> | undefined;
+
+    const run = () => (verdict ??= said.length < 8 ? Promise.resolve(false) : (async () => {
+      const sets = { ...(wantInjection ? { inyeccion: QUESTIONS.inyeccion } : {}), ...(wantRoute ? { ruta: routeQ } : {}) } as Record<string, any>;
+      const d: any = await this.decisions.decideMany(said, sets, { subject });
+      if (d.ruta) {
+        routeId = d.ruta.id;
+        const a = d.ruta.answers.turno ?? d.ruta.answers.turno_dueno;
+        if (!d.ruta.shadow && a.by !== 'defecto') route = a.value as Route; // en sombra o sin respuesta: no hay ruta, se usa todo
+      }
+      const hit = d.inyeccion?.answers.ordenes.value === true;
       if (hit) try { this.alert(said, subject); } catch { /* el aviso no puede cambiar el veredicto */ }
       return hit;
-    }).catch(() => false));
-    if (this.decisions.graded) void run();
+    })().catch(() => false));
+    if (graded) void run(); // con Jev: en paralelo desde el inicio del turno. Sin Jev: solo si hace falta (blocks).
+
     return {
       blocks: async (tool) => {
-        if (!EFFECT_TOOLS.has(tool)) return false;
+        if (!wantInjection || !EFFECT_TOOLS.has(tool)) return false;
         const hit = await run();
         if (hit) this.log.warn(`${subject}: ${tool} no corrió (posible texto con instrucciones para la IA)`);
         return hit;
       },
+      route: () => route,
+      done: (toolsUsed) => {
+        if (!routeId) return;
+        const real: Route = toolsUsed.some((t) => JOB_TOOLS.has(t)) ? 'encargo' : toolsUsed.length ? 'herramienta' : 'charla';
+        void this.decisions.outcome(routeId, `${real}${toolsUsed.length ? ': ' + [...new Set(toolsUsed)].join(', ') : ''}`);
+      },
     };
+  }
+
+  /** Las herramientas que se le envian al modelo segun la ruta. Sin ruta, o con el ajuste apagado, van todas. */
+  tools<T extends { function?: { name?: string } }>(all: T[], route: Route | undefined): T[] {
+    if (!route || route === 'herramienta' || route === 'encargo' || !this.settings.boolean('ruta.grupos')) return all;
+    return all.filter((t) => ALWAYS_TOOLS.has(String(t.function?.name)));
+  }
+  /** ¿Este turno va con el modelo capaz? Solo un encargo largo del DUEÑO, si hay modelo configurado y Javier lo encendio en el panel. */
+  useCapable(route: Route | undefined, owner: boolean): boolean {
+    return owner && route === 'encargo' && this.capable.enabled && this.settings.boolean('ruta.modelo_capaz');
   }
 
   /** Como mucho una alerta cada 10 minutos; las que se callan se cuentan en la siguiente. */

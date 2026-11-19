@@ -13,6 +13,7 @@ import { DecisionsService } from '../decisions/decisions.service';
 import { Kind, KINDS, QUESTIONS } from '../decisions/questions';
 import { SettingsService } from '../settings/settings.service';
 import { OptOutService } from '../security/optout.service';
+import { CapableModelService } from '../llm/capable.service';
 import { MusicService } from '../music/music.service';
 import { AlertsService } from '../ops/alerts.service';
 import { OpsService } from '../ops/ops.service';
@@ -26,7 +27,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -188,7 +189,7 @@ export class OwnerController {
   @Get('decisions')
   async decisionsView(@Req() req: Request, @Query('kind') kind?: string) {
     this.require(req);
-    return { status: await this.decisions.status(), settings: this.settings.list().filter((s) => s.group === 'decisiones'), decisions: await this.decisions.list(100, typeof kind === 'string' && kind in KINDS ? kind : '') };
+    return { status: await this.decisions.status(), route: await this.decisions.routeStats(), capableModel: this.capable.label, capableProblem: this.capable.problem, settings: this.settings.list().filter((s) => s.group === 'ruta'), decisions: await this.decisions.list(100, typeof kind === 'string' && kind in KINDS ? kind : '') };
   }
   @Patch('settings')
   async setSetting(@Req() req: Request, @Body() body: { key?: string; value?: unknown }) {
