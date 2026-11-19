@@ -14,6 +14,7 @@ import { Kind, KINDS, QUESTIONS } from '../decisions/questions';
 import { SettingsService } from '../settings/settings.service';
 import { OptOutService } from '../security/optout.service';
 import { CapableModelService } from '../llm/capable.service';
+import { ACTION_KINDS, ActionsService } from '../policy/actions.service';
 import { MusicService } from '../music/music.service';
 import { AlertsService } from '../ops/alerts.service';
 import { OpsService } from '../ops/ops.service';
@@ -27,7 +28,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -184,6 +185,19 @@ export class OwnerController {
 
   @Delete('leads/:id')
   async removeLead(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: await this.leads.remove(Number(id)) }; }
+
+  // ---- autonomia: politica (limites que pone Javier) y bitacora de lo que el avatar hizo por su cuenta ----
+  @Get('policy')
+  async policyView(@Req() req: Request) {
+    this.require(req);
+    return { status: await this.actions.status(), settings: this.settings.list().filter((s) => s.group === 'politica' || s.group === 'horario'), kinds: ACTION_KINDS };
+  }
+  /** La bitacora solo se consulta: no hay forma de cambiarla ni de borrarla desde el panel. */
+  @Get('actions')
+  async actionsView(@Req() req: Request, @Query('status') status?: string, @Query('kind') kind?: string, @Query('q') q?: string, @Query('days') days?: string) {
+    this.require(req);
+    return { actions: await this.actions.list({ status: String(status ?? ''), kind: String(kind ?? ''), q: String(q ?? '').slice(0, 80), days: Math.min(365, Math.max(1, Number(days) || 30)) }), chain: await this.actions.verify(), kinds: ACTION_KINDS };
+  }
 
   // ---- capa de decisiones: quien decide, registro, umbrales y prueba ----
   @Get('decisions')

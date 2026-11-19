@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -294,6 +294,47 @@ async function loadUsage() {
 }
 
 // ---------- taller ----------
+// ---- Autonomia: los limites dentro de los que el avatar actua solo. Cada cambio se guarda al salir del campo. ----
+const MODES = { pausa: '⏸ En pausa: no hace nada por su cuenta.', simulacion: '🧪 Simulación: nada sale de verdad; la bitácora anota lo que habría hecho.', pruebas: '🔬 Pruebas: solo puede contactar a los números de prueba.', produccion: '🟢 Producción: actúa de verdad, dentro de los límites.' };
+const STATUS_LABEL = { enviada: 'Enviada', simulada: 'Simulada', requiere_aprobacion: 'Espera aprobación', bloqueada: 'Bloqueada', fallo: 'Falló' };
+const CLASS_LABEL = { libre: 'Libre', autonoma: 'Sola, dentro de los límites', aprobacion: 'Siempre con tu aprobación' };
+function settingField(st, after) {
+  const save = async (value, input) => { try { await patchSetting(st.key, value); $('pol-msg').textContent = `Guardado: ${st.label}.`; after?.(); } catch (e) { $('pol-msg').textContent = `No se guardó «${st.label}»: ${e.message}.`; if (input.type === 'checkbox') input.checked = st.value; else input.value = st.value; } };
+  let input;
+  if (st.type === 'boolean') { input = el('input', { type: 'checkbox', checked: st.value }); input.addEventListener('change', () => save(input.checked, input)); return el('label', { style: 'display:grid;gap:2px' }, el('span', { className: 'row' }, input, el('strong', { textContent: st.label })), st.hint ? el('small', { textContent: st.hint }) : null); }
+  if (st.type === 'number') { input = el('input', { type: 'number', min: st.min, max: st.max, step: 'any', value: st.value, style: 'width:120px' }); input.addEventListener('change', () => save(Number(input.value), input)); }
+  else { input = el('input', { type: 'text', value: st.value, placeholder: st.example || '', maxLength: st.max, style: 'flex:1;min-width:150px' }); input.addEventListener('change', () => save(input.value, input)); }
+  return el('label', { style: 'display:grid;gap:2px' }, el('span', { className: 'row', style: 'flex-wrap:wrap' }, el('span', { textContent: st.label, style: 'min-width:120px' }), input), st.hint ? el('small', { textContent: st.hint }) : null);
+}
+async function loadPolicy() {
+  const { status, settings, kinds } = await json('policy');
+  const t = status.today, l = status.limits;
+  $('pol-mode').textContent = MODES[status.mode] || status.mode;
+  $('pol-today').textContent = `Hoy: ${n(t.messages)} de ${n(l.messages)} mensajes, ${n(t.calls)} de ${n(l.calls)} llamadas, ${t.usd.toFixed(2)} de ${l.usdDay ? l.usdDay + ' USD' : 'sin tope'} · este mes ${status.month.usd.toFixed(2)} de ${l.usdMonth ? l.usdMonth + ' USD' : 'sin tope'} · ${n(t.blocked)} bloqueadas y ${n(t.pending)} a la espera de aprobación.`
+    + (status.outsideHours ? ` Ahora mismo no contactaría a nadie: ${status.outsideHours}.` : '') + (status.mode === 'pruebas' && !status.testNumbers ? ' No hay números de prueba cargados: no puede contactar a nadie.' : '');
+  const pick = (keys) => keys.map((k) => settings.find((s) => s.key === 'politica.' + k)).filter(Boolean);
+  $('pol-switches').replaceChildren(...pick(['pausa', 'simulacion', 'produccion', 'numeros_prueba']).map((s) => settingField(s, loadPolicy)));
+  $('pol-hours').replaceChildren(...settings.filter((s) => s.group === 'horario').map((s) => settingField(s, loadPolicy)));
+  $('pol-tz').textContent = '(hora de Colombia, formato 08:00-18:00)';
+  $('pol-limits').replaceChildren(...pick(['max_mensajes_contacto_dia', 'max_llamadas_contacto_dia', 'max_mensajes_dia', 'max_llamadas_dia', 'max_intentos_interesado', 'gasto_dia_usd', 'gasto_mes_usd', 'costo_plantilla_usd']).map((s) => settingField(s, loadPolicy)));
+  $('pol-kinds').replaceChildren(...Object.values(kinds).map((k) => el('li', { className: 'row' }, el('strong', { textContent: k.label }), el('span', { className: 'tag', textContent: CLASS_LABEL[k.class] }))));
+}
+async function loadActions() {
+  const q = new URLSearchParams({ status: $('act-status').value, kind: $('act-kind').value, q: $('act-q').value, days: $('act-days').value });
+  const { actions, chain, kinds } = await json(`actions?${q}`);
+  const sel = $('act-kind'); if (sel.options.length === 1) sel.append(...Object.entries(kinds).map(([k, v]) => el('option', { value: k, textContent: v.label })));
+  $('act-count').textContent = `(${actions.length})`;
+  $('act-chain').textContent = chain.ok ? `✓ Cadena íntegra (${n(chain.rows)} filas)` : `⚠ La cadena se rompe en la fila #${chain.brokenAt}: alguien cambió la bitácora por fuera`;
+  $('act-chain').style.background = chain.ok ? '' : 'rgba(217,89,38,.4)';
+  $('act-list').replaceChildren(...(actions.length ? actions.map((a) => el('li', {},
+    el('div', { className: 'row' }, el('strong', { textContent: kinds[a.kind]?.label || a.kind }), el('span', { className: 'tag', textContent: STATUS_LABEL[a.status] || a.status }), a.contact ? el('span', { className: 'tag', textContent: a.contact.includes('@') ? a.contact : '+' + a.contact }) : null),
+    el('small', { textContent: `${fecha(a.at)} · disparador: ${a.trigger || 'sin dato'}${a.lead_id ? ` · interesado #${a.lead_id}` : ''}${Number(a.cost_usd) ? ` · ${Number(a.cost_usd).toFixed(4)} USD` : ''}${a.decisions ? ` · decisiones ${a.decisions}` : ''} · #${a.id}` }),
+    el('div', { textContent: a.content }), a.reason ? el('small', { textContent: `Motivo: ${a.reason}` }) : null))
+    : [el('li', { textContent: 'No hay nada en la bitácora con esos filtros.' })]));
+}
+for (const id of ['act-status', 'act-kind', 'act-days']) $(id).addEventListener('change', loadActions);
+$('act-q').addEventListener('input', () => { clearTimeout(loadActions.t); loadActions.t = setTimeout(loadActions, 300); });
+
 // ---- Decisiones: quien decide (Jev o DeepSeek), umbrales, modo sombra, prueba y registro ----
 const PROVIDERS = { jev: 'Jev', deepseek: 'DeepSeek', defecto: 'valor por defecto' };
 const showValue = (v) => (v === true ? 'sí' : v === false ? 'no' : String(v));

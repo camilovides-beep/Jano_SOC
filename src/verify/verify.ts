@@ -44,6 +44,9 @@ async function main() {
   const { WaChatService } = await import('../whatsapp/wa-chat.service');
   const { SessionGateway } = await import('../session/session.gateway');
   const { CapableModelService, toAnthropic } = await import('../llm/capable.service');
+  const { PolicyService } = await import('../policy/policy.service');
+  const { ActionsService } = await import('../policy/actions.service');
+  const { LeadsService } = await import('../leads/leads.service');
 
   const usage = { add() {} } as any, alerts = { report() {}, set() {}, send: async () => '' } as any;
   const build = async (jevKey: string) => {
@@ -54,7 +57,8 @@ async function main() {
     await settings.onModuleInit();
     const optout = new OptOutService(cfg, db, decisions, alerts), capable = new CapableModelService(cfg, usage), guard = new InjectionGuard(decisions, alerts, settings, cfg, capable);
     await optout.onModuleInit();
-    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa: new WhatsAppService(cfg, llm, usage, optout) };
+    const policy = new PolicyService(cfg, settings), actions = new ActionsService(cfg, db, policy, optout, alerts), wa = new WhatsAppService(cfg, llm, usage, optout);
+    return { cfg, db, settings, llm, decisions, optout, guard, capable, wa, policy, actions, leads: new LeadsService(cfg, wa, db, actions, policy) };
   };
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   /** Proveedor simulado: responde lo que se le diga, tarda lo que se le diga o falla. */
@@ -427,7 +431,98 @@ async function main() {
   });
 
   await check('Calificación de interesados: aciertos sobre los casos marcados', async () => skip('llega en la etapa 3; se medirá cuando haya al menos 30 casos marcados en el panel (hoy hay 0)'));
-  for (const [name, stage] of [['Límites de gasto y horarios se respetan', 2], ['Ningún mensaje autónomo sale con precios sin catálogo', 2]] as const)
+  // ---------- Etapa 2a: politica, puerta de acciones y bitacora ----------
+  const P = noJev, A = P.actions, at = (iso: string) => { A.now = () => new Date(iso); };
+  const MON10 = '2026-11-16T15:00:00.000Z'; // lunes 10:00 en Colombia
+  let sends = 0; const send = async () => { sends++; return ''; };
+  const req = (contact: string, o: Record<string, unknown> = {}) => ({ kind: 'mensaje_seguimiento' as const, contact, consent: true, trigger: 'prueba', content: 'Hola, soy el asistente con IA de Javier.', ...o });
+  const setP = (k: string, v: unknown) => P.settings.set(`politica.${k}`, v).then((e) => must(e === '', `no se guardó politica.${k}: ${e}`));
+
+  await check('Autonomía: arranca en simulación y sin producción; simulado no envía nada', async () => {
+    at(MON10);
+    must(P.policy.simulation && !P.policy.production && !P.policy.paused, 'los valores de fábrica no son simulación sin producción');
+    let r = await A.run(req('3005550001'), send);
+    must(r.status === 'bloqueada' && /prueba/.test(r.reason) && sends === 0, `sin producción y sin estar en la lista debía bloquearse: ${r.status} ${r.reason}`);
+    await setP('numeros_prueba', '+57 300 555 0001, 3005550002');
+    r = await A.run(req('300 555 0001'), send);
+    must(r.status === 'simulada' && sends === 0, `en simulación no debe enviarse nada: ${r.status}, envíos ${sends}`);
+    must((await P.settings.set('politica.numeros_prueba', 'hola; rm -rf')) !== '' && (await P.settings.set('politica.horario.lun', '8 a 6')) !== '', 'aceptó un ajuste de texto con formato inválido');
+  });
+
+  await check('Límites de gasto y horarios se respetan', async () => {
+    await setP('simulacion', false); await setP('produccion', true); sends = 0;
+    at('2026-11-16T12:30:00.000Z'); // lunes 7:30
+    must((await A.run(req('3005550010'), send)).status === 'bloqueada' && sends === 0, 'envió antes de la hora permitida');
+    at('2026-11-15T15:00:00.000Z'); // domingo 10:00
+    must(/domingo/.test((await A.run(req('3005550010'), send)).reason) && sends === 0, 'envió un domingo');
+    at('2026-11-14T19:00:00.000Z'); // sábado 14:00 (el sábado cierra a las 13)
+    must((await A.run(req('3005550010'), send)).status === 'bloqueada', 'envió el sábado fuera de su franja');
+    at(MON10);
+    must((await A.run(req('3005550010'), send)).status === 'enviada' && (await A.run(req('3005550010'), send)).status === 'enviada' && sends === 2, 'dentro del horario y del tope debía enviar');
+    const third = await A.run(req('3005550010'), send);
+    must(third.status === 'bloqueada' && /tope de mensajes a este contacto/.test(third.reason) && sends === 2, `tercer mensaje al mismo contacto en el día: ${third.status} ${third.reason}`);
+    must((await A.run(req('3005550010', { kind: 'llamada_seguimiento' }), send)).status === 'enviada' && (await A.run(req('3005550010', { kind: 'llamada_seguimiento' }), send)).status === 'bloqueada', 'el tope de llamadas por contacto (1) no se aplicó aparte del de mensajes');
+    at('2026-11-17T15:00:00.000Z'); // martes: nuevo día, pero ya van 3 intentos con esa persona
+    const fourth = await A.run(req('3005550010'), send);
+    must(fourth.status === 'bloqueada' && /intentos/.test(fourth.reason), `cuarto intento con la misma persona: ${fourth.status} ${fourth.reason}`);
+    await setP('max_mensajes_dia', 2); at('2026-11-18T15:00:00.000Z'); sends = 0;
+    await A.run(req('3005550021'), send); await A.run(req('3005550022'), send);
+    must((await A.run(req('3005550023'), send)).status === 'bloqueada' && sends === 2, 'no se aplicó el tope de mensajes del día');
+    await setP('max_mensajes_dia', 20); await setP('gasto_dia_usd', 1); at('2026-11-19T15:00:00.000Z'); sends = 0;
+    must((await A.run(req('3005550031', { costUsd: 0.6 }), send)).status === 'enviada', 'el primer gasto cabía en el tope');
+    const over = await A.run(req('3005550032', { costUsd: 0.6 }), send);
+    must(over.status === 'bloqueada' && /gasto máximo de hoy/.test(over.reason) && sends === 1, `gasto por encima del tope diario: ${over.status} ${over.reason}`);
+    await setP('gasto_dia_usd', 2); await setP('gasto_mes_usd', 1);
+    must(/mes/.test((await A.run(req('3005550033', { costUsd: 0.6 }), send)).reason), 'no se aplicó el tope de gasto mensual');
+    await setP('gasto_mes_usd', 30);
+    return 'horario por día, tope por contacto, tope del día, intentos por persona, gasto diario y mensual';
+  });
+
+  await check('Autonomía: pausa, "no contactar", aprobación y fallos', async () => {
+    at('2026-11-20T15:00:00.000Z'); sends = 0;
+    await setP('pausa', true); must((await A.run(req('3005550041'), send)).status === 'bloqueada' && sends === 0, 'con la pausa general se envió algo'); await setP('pausa', false);
+    await P.optout.mark('3005550042', 'prueba', 'no me escriban', 'javier');
+    must(/no ser contactada/.test((await A.run(req('3005550042'), send)).reason) && sends === 0, 'se contactó a alguien marcado como no contactar');
+    must((await A.run(req('3005550043', { consent: false }), send)).status === 'requiere_aprobacion' && sends === 0, 'un primer contacto sin autorización registrada debía pedir aprobación');
+    must((await A.run(req('3005550044', { kind: 'plantilla_bienvenida' }), send)).status === 'requiere_aprobacion' && sends === 0, 'la plantilla de bienvenida debía pedir aprobación');
+    must((await A.run(req('3005550044', { kind: 'plantilla_bienvenida', approved: true }), send)).status === 'enviada' && sends === 1, 'una acción ya aprobada debía salir');
+    must((await A.run(req('3005550042', { approved: true }), send)).status === 'bloqueada', 'la aprobación no puede saltarse el "no contactar"');
+    must((await A.run(req('3005550045'), async () => 'Meta respondió 500')).status === 'fallo', 'un envío que falla debe quedar como fallo');
+    must((await A.run(req('no es un contacto'), send)).status === 'bloqueada', 'aceptó un contacto que no es teléfono ni correo');
+  });
+
+  await check('La plantilla de bienvenida pasa por la puerta: en simulación no sale', async () => {
+    at('2026-11-23T15:00:00.000Z'); await setP('simulacion', true); await setP('produccion', false); sent.length = 0;
+    const lead = await P.leads.add({ name: 'Ana Prueba', contact: '300 555 0001', interest: 'chatbots', source: 'voz' });
+    must(!!lead.consent_at && lead.consent_source === 'voz', 'el interesado no guardó cuándo y por dónde autorizó');
+    const why = await P.leads.announce(lead);
+    must(why !== '' && !sent.some((u) => u.includes('graph.facebook.com')), `la plantilla salió hacia Meta: «${why}»`);
+    const other = await P.leads.add({ name: 'Otro', contact: '3005559999', interest: 'otro', source: 'voz' });
+    must(/prueba/.test(String(await P.leads.announce(other))) && !sent.some((u) => u.includes('graph.facebook.com')), 'sin producción se intentó escribir a un número que no es de prueba');
+    await setP('simulacion', false); await setP('produccion', true);
+    must(/aprobación/.test(String(await P.leads.announce(lead))) && !sent.some((u) => u.includes('graph.facebook.com')), 'en producción la plantilla debía esperar aprobación, no salir sola');
+    return 'simulación: no sale; sin producción: solo números de prueba; en producción: espera aprobación';
+  });
+
+  await check('Bitácora: registra cada intento y detecta si alguien la altera', async () => {
+    const rows = await A.list({ days: 3650, limit: 500 }), v = await A.verify();
+    must(rows.length >= 20 && v.ok && v.rows === (await P.db.query('SELECT id FROM actions')).length, `cadena: ${JSON.stringify(v)}, filas ${rows.length}`);
+    must(rows.every((r) => r.trigger && r.content && r.status && r.hash.length === 64), 'hay filas sin disparador, contenido, resultado o huella');
+    must(rows.some((r) => r.status === 'bloqueada' && r.reason) && rows.some((r) => r.status === 'simulada' && Number(r.simulated) === 1), 'no quedaron los intentos bloqueados o simulados');
+    must(!('remove' in A) && !('update' in A) && !('delete' in A), 'el servicio de la bitácora no debe tener forma de cambiarla ni borrarla');
+    const victim = rows[Math.floor(rows.length / 2)];
+    await P.db.query('UPDATE actions SET content = $1 WHERE id = $2', ['texto cambiado por fuera', victim.id]);
+    const broken = await A.verify();
+    must(!broken.ok && broken.brokenAt === Number(victim.id), `no detectó la fila alterada: ${JSON.stringify(broken)}`);
+    await P.db.query('UPDATE actions SET content = $1 WHERE id = $2', [victim.content, victim.id]);
+    must((await A.verify()).ok, 'la cadena no volvió a quedar íntegra al restaurar la fila');
+    await P.db.query('DELETE FROM actions WHERE id = $1', [rows[rows.length - 2].id]);
+    must(!(await A.verify()).ok, 'no detectó una fila borrada');
+    return `${rows.length} filas; detecta una fila cambiada y una fila borrada`;
+  });
+  A.now = () => new Date();
+
+  for (const [name, stage] of [['Bandeja de aprobaciones: aprobar y rechazar', '2b'], ['Ningún mensaje autónomo sale con precios sin catálogo', '2c']] as const)
     await check(name, async () => skip(`todavía no existe lo que comprueba (etapa ${stage})`));
 
   rmSync(dir, { recursive: true, force: true });

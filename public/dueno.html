@@ -96,6 +96,8 @@
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
           <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
+          <button role="tab" data-tab="autonomia">Autonomía</button>
+          <button role="tab" data-tab="bitacora">Bitácora</button>
           <button role="tab" data-tab="decisiones">Decisiones</button>
           <button role="tab" data-tab="consumo">Consumo</button>
           <button role="tab" data-tab="taller">Taller</button>
@@ -168,6 +170,33 @@
             </form>
           </div>
           <div class="card"><h2>Casos <small id="case-count"></small></h2><ul class="list" id="case-list"></ul></div>
+        </section>
+
+        <section data-view="autonomia" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2>Cómo está actuando el avatar por su cuenta</h2>
+            <p id="pol-mode" style="font-size:18px;margin:0"></p>
+            <p id="pol-today" class="muted" style="margin:0"></p>
+            <p id="pol-msg" class="muted" style="margin:0"></p>
+          </div>
+          <div class="grid">
+            <div class="card"><h2>Interruptores y números de prueba</h2><div id="pol-switches" style="display:grid;gap:10px;align-content:start"></div></div>
+            <div class="card"><h2>Horario en que puede contactar <small id="pol-tz"></small></h2><div id="pol-hours" style="display:grid;gap:8px;align-content:start"></div></div>
+          </div>
+          <div class="card"><h2>Topes</h2><div id="pol-limits" style="display:grid;gap:10px"></div></div>
+          <div class="card"><h2>Qué puede hacer solo y qué pide aprobación</h2><ul class="list" id="pol-kinds"></ul></div>
+        </section>
+
+        <section data-view="bitacora" class="card" hidden>
+          <div class="row between"><h2>Bitácora <small id="act-count"></small></h2><span id="act-chain" class="tag"></span></div>
+          <p class="muted" style="margin:0">Todo lo que el avatar hizo, intentó o habría hecho por su cuenta. Solo se agregan filas: no se pueden cambiar ni borrar.</p>
+          <div class="filters">
+            <input id="act-q" type="search" placeholder="Buscar por contacto, texto o motivo">
+            <select id="act-status"><option value="">Todos los resultados</option><option value="enviada">Enviadas</option><option value="simulada">Simuladas</option><option value="requiere_aprobacion">Esperan aprobación</option><option value="bloqueada">Bloqueadas</option><option value="fallo">Fallaron</option></select>
+            <select id="act-kind"><option value="">Todas las acciones</option></select>
+            <select id="act-days"><option value="7">7 días</option><option value="30" selected>30 días</option><option value="365">Un año</option></select>
+          </div>
+          <ul class="list" id="act-list"></ul>
         </section>
 
         <section data-view="decisiones" style="display:grid;gap:16px" hidden>

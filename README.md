@@ -127,6 +127,11 @@ proyectos del taller (descargar o eliminar) y dispositivos.
   una alerta.
 - **"No me contacten" se cumple en código.** Quien lo pide queda marcado y el avatar no vuelve a escribirle ni a llamarlo
   por su cuenta; la marca se comprueba antes de cada envío y solo el dueño puede quitarla, desde el panel.
+- **Autonomía con límites en código.** Todo lo que el avatar haría por iniciativa propia pasa por una sola puerta:
+  interruptor general, "no contactar", números de prueba, aprobación, horario, topes por contacto y por día, intentos
+  por persona y gasto. Los límites se ponen en el panel (pestaña Autonomía). Arranca en **modo simulación**: nada sale.
+- **Bitácora.** Cada intento, salga o no, queda registrado. Solo se agregan filas y van encadenadas por su huella: si
+  alguien cambia o borra una, el panel lo muestra.
 - **`npm run verificar`** comprueba estas reglas en simulación, sin enviar nada a nadie.
 
 ## Correr en local
@@ -194,6 +199,8 @@ src/
   owner/      panel y dispositivos del dueño
   decisions/  capa de decisiones (Jev o DeepSeek), con registro y umbrales
   settings/   ajustes que se cambian desde el panel
+  policy/     límites de autonomía, puerta de acciones y bitácora
+  security/   "no contactar" y señal de inyección
   ops/ usage/ alertas, respaldos y consumo
   verify/     comprobaciones de `npm run verificar`
   db/         PostgreSQL con respaldo en SQLite

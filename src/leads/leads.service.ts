@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
-import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { ActionsService } from '../policy/actions.service';
+import { PolicyService } from '../policy/policy.service';
+import { WhatsAppService, toPhone } from '../whatsapp/whatsapp.service';
 
 export const INTERESTS = ['chatbots', 'agentes_de_voz', 'bots_de_whatsapp', 'automatizacion', 'dashboards', 'despliegue_y_servidores', 'desarrollo_de_software', 'otro'] as const;
 export const STATUSES = ['nuevo', 'contactado', 'en_conversacion', 'cliente', 'descartado'] as const;
@@ -10,6 +12,7 @@ export interface Lead {
   id: number; created_at: string; name: string; contact: string; company: string;
   interest: string; detail: string; status: string; notes: string;
   source: string;   // de donde llego: voz, llamada, formulario:<proyecto>
+  consent_at: string; consent_source: string; // cuando y por donde autorizo que la contacten ('' = sin autorizacion registrada)
 }
 export interface Conversation { id: number; at: string; kind: string; who: string; seconds: number; turns: number; transcript: string; }
 export interface NewLead { name: string; contact: string; company?: string; interest: string; detail?: string; source?: string; }
@@ -22,7 +25,7 @@ const clip = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').tri
 @Injectable()
 export class LeadsService {
   private readonly log = new Logger(LeadsService.name);
-  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService) {}
+  constructor(private readonly cfg: ConfigService, private readonly whatsapp: WhatsAppService, private readonly db: DbService, private readonly actions: ActionsService, private readonly policy: PolicyService) {}
 
   /** Donde se estan guardando los datos ('postgres' o 'sqlite'), para mostrarlo en el panel. */
   get dbKind() { return this.db.kind; }
@@ -64,7 +67,9 @@ export class LeadsService {
   async add(input: NewLead): Promise<Lead> {
     const row = [new Date().toISOString(), clip(input.name, 120), clip(input.contact, 160), clip(input.company, 120),
       INTERESTS.includes(input.interest as any) ? input.interest : 'otro', clip(input.detail, 800), clip(input.source, 60)];
-    const [saved] = await this.db.query<Lead>('INSERT INTO leads (created_at, name, contact, company, interest, detail, source) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', row);
+    // Todo interesado se guarda con autorizacion (la herramienta exige `autoriza`, el formulario su casilla): queda anotada.
+    const now = String(row[0]);
+    const [saved] = await this.db.query<Lead>('INSERT INTO leads (created_at, name, contact, company, interest, detail, source, consent_at, consent_source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *', [...row, now, row[6]]);
     this.log.log(`interesado #${saved.id} registrado (${saved.interest}${saved.source ? ', ' + saved.source : ''})`);
     return saved;
   }
@@ -134,9 +139,23 @@ export class LeadsService {
    * Tras guardar un interesado: le envia la plantilla de WhatsApp y avisa a Javier por Telegram (y por webhook si hay).
    * Devuelve '' si la plantilla se envio, el motivo si no, o undefined si WhatsApp no esta configurado.
    */
+  /**
+   * Interesado nuevo: avisa a Javier y, si corresponde, envia la plantilla de bienvenida. La plantilla es un envio por
+   * iniciativa propia a un numero que la persona dicto, asi que pasa por la puerta de acciones (pausa, no contactar,
+   * numeros de prueba, aprobacion, horario, topes, simulacion). Devuelve '' si salio de verdad, o por que no salio.
+   */
   async announce(lead: Lead): Promise<string | undefined> {
+    let wa: string | undefined;
     // Quien deja sus datos escribiendo por WhatsApp ya esta en ese chat: no se le manda ademas la plantilla de bienvenida.
-    const wa = this.whatsapp.enabled && lead.source !== 'whatsapp' ? await this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest) : undefined;
+    if (this.whatsapp.enabled && lead.source !== 'whatsapp') {
+      if (!toPhone(lead.contact, this.cfg.whatsappDefaultCountry)) wa = 'el contacto no es un número de WhatsApp';
+      else {
+        const r = await this.actions.run({ kind: 'plantilla_bienvenida', contact: lead.contact, leadId: lead.id, consent: !!lead.consent_at, trigger: 'interesado nuevo',
+          content: `Plantilla "${this.cfg.whatsappTemplate}" para ${lead.name.split(/\s+/)[0]}, interés: ${lead.interest.replaceAll('_', ' ')}`, costUsd: this.policy.limit('costo_plantilla_usd') },
+          () => this.whatsapp.sendWelcome(lead.contact, lead.name, lead.interest));
+        wa = r.status === 'enviada' ? '' : r.status === 'simulada' ? 'simulación: no se envió nada (quedó en la bitácora)' : r.status === 'requiere_aprobacion' ? `espera tu aprobación (${r.reason})` : r.reason || 'no se envió';
+      }
+    }
     void this.notify(lead, wa);
     return wa;
   }

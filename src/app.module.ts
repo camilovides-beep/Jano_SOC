@@ -24,6 +24,8 @@ import { WaChatService } from './whatsapp/wa-chat.service';
 import { SettingsService } from './settings/settings.service';
 import { DecisionsService } from './decisions/decisions.service';
 import { CapableModelService } from './llm/capable.service';
+import { PolicyService } from './policy/policy.service';
+import { ActionsService } from './policy/actions.service';
 import { OptOutService } from './security/optout.service';
 import { InjectionGuard } from './security/injection.guard';
 import { MemoryService } from './memory/memory.service';
@@ -44,6 +46,6 @@ import { VisitsService } from './visits/visits.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, OptOutService, InjectionGuard],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, OptOutService, InjectionGuard],
 })
 export class AppModule {}
