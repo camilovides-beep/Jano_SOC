@@ -109,6 +109,28 @@ export class ConfigService {
   readonly publicUrl: string;
   /** Clave del webhook de alertas (POST /alertas, cabecera X-Alert-Secret). Vacia = webhook apagado. */
   readonly alertsWebhookSecret: string;
+  /** Carpeta con los logs de aplicaciones y de red que Jano puede analizar en modo dueño (solo lectura). Vacia = sin analisis de logs. */
+  readonly logsDir: string;
+  /** Cuanto se lee del final de cada archivo de log, en MB. */
+  readonly logsMaxMb: number;
+  /** Clave de la entrada de logs por HTTP (POST /logs/<fuente>, cabecera X-Logs-Secret). Vacia = entrada apagada. */
+  readonly logsIngestSecret: string;
+  /** Tamaño al que rota cada archivo de logs recibidos por la red, en MB. */
+  readonly logsInboxMaxMb: number;
+  /** Puerto del receptor de syslog (UDP y TCP). 0 = apagado. */
+  readonly syslogPort: number;
+  /** Remitentes de syslog aceptados (direcciones o prefijos como "192.168.1."). Vacia = solo redes privadas. */
+  readonly syslogAllow: string[];
+  /** SIEM con API de busqueda de OpenSearch/Elasticsearch (Wazuh, Elastic, OpenSearch). Sin URL = sin consulta al SIEM. */
+  readonly siemUrl: string;
+  readonly siemUser: string;
+  readonly siemPassword: string;
+  readonly siemApiKey: string;
+  readonly siemIndex: string;
+  readonly siemTimeField: string;
+  readonly siemCaFile: string;
+  /** No validar el certificado del SIEM. Solo para laboratorio: en produccion se usa SIEM_CA_FILE. */
+  readonly siemTlsInsecure: boolean;
   readonly callMode: string;
   readonly callPublicIp: string;
   readonly callPortMin: number;
@@ -240,6 +262,21 @@ export class ConfigService {
     this.wakeWords = (process.env.WAKE_WORDS || 'jano,yano,hano,janos').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.alertsWebhookSecret = str('ALERTS_WEBHOOK_SECRET');
+    this.logsDir = str('LOGS_DIR');
+    this.logsMaxMb = int('LOGS_MAX_MB', 4, 1);
+    this.logsIngestSecret = str('LOGS_INGEST_SECRET');
+    this.logsInboxMaxMb = int('LOGS_INBOX_MAX_MB', 20, 1);
+    this.syslogPort = int('LOGS_SYSLOG_PORT', 0);
+    this.syslogAllow = str('LOGS_SYSLOG_ALLOW').split(',').map((x) => x.trim()).filter(Boolean);
+    this.siemUrl = str('SIEM_URL');
+    if (this.siemUrl && !/^https?:\/\//.test(this.siemUrl)) throw new Error('SIEM_URL debe empezar por http:// o https://');
+    this.siemUser = str('SIEM_USER');
+    this.siemPassword = str('SIEM_PASSWORD');
+    this.siemApiKey = str('SIEM_API_KEY');
+    this.siemIndex = str('SIEM_INDEX', 'wazuh-alerts-*');
+    this.siemTimeField = str('SIEM_TIME_FIELD', '@timestamp');
+    this.siemCaFile = str('SIEM_CA_FILE');
+    this.siemTlsInsecure = str('SIEM_TLS_INSECURE') === '1';
     this.callMode = str('CALL_MODE', 'rechazar').toLowerCase();
     // Una llamada de WhatsApp no tiene navegador: sin voz del servidor no se puede atender.
     if (this.ttsProvider === 'browser' && this.callMode === 'conversar') this.callMode = 'rechazar';

@@ -4,6 +4,7 @@
 node_modules/
 dist/
 data/
+/logs/
 # Documentos de la base de conocimiento: se cargan a Qdrant desde local, no van al repositorio.
 conocimiento/
 public/vendor/

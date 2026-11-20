@@ -31,6 +31,10 @@ import { OptOutService } from './security/optout.service';
 import { InjectionGuard } from './security/injection.guard';
 import { SecurityAlertsService } from './security/security-alerts.service';
 import { AlertsController } from './security/alerts.controller';
+import { LogsService } from './logs/logs.service';
+import { IngestController } from './logs/ingest.controller';
+import { SyslogService } from './logs/syslog.service';
+import { SiemService } from './logs/siem.service';
 import { MemoryService } from './memory/memory.service';
 import { ElevenLabsService } from './tts/elevenlabs.service';
 import { UsageService } from './usage/usage.service';
@@ -45,10 +49,10 @@ import { VisitsService } from './visits/visits.service';
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/imagenes/{*path}', '/alertas', '/alertas/{*path}'],
+      exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/imagenes/{*path}', '/alertas', '/alertas/{*path}', '/logs', '/logs/{*path}'],
     }),
   ],
-  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, PortfolioImagesController, AlertsController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, PortfolioService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard, SecurityAlertsService],
+  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, PortfolioImagesController, AlertsController, IngestController],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, PortfolioService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard, SecurityAlertsService, LogsService, SyslogService, SiemService],
 })
 export class AppModule {}

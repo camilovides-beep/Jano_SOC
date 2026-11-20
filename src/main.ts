@@ -9,12 +9,15 @@ process.umask(0o077);
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ConfigService } from './config/config.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { rawBody: true }); // el cuerpo crudo se usa para validar la firma del webhook
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true }); // el cuerpo crudo se usa para validar la firma del webhook
   app.useWebSocketAdapter(new WsAdapter(app));
+  // Entrada de logs (POST /logs/<fuente>): ademas de JSON acepta texto, una linea por evento.
+  app.useBodyParser('text', { type: ['text/plain', 'application/x-ndjson'], limit: '1mb' });
   app.enableShutdownHooks();
   const cfg = app.get(ConfigService);
   await app.listen(cfg.port, '0.0.0.0');

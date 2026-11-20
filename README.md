@@ -78,6 +78,61 @@ curl -X POST https://<dominio>/alertas \
 `severidad` es `baja`, `media`, `alta` o `critica`. `GET /alertas/estado` devuelve solo cuántas hay abiertas, sin
 detalles: es lo que consulta cada pantalla.
 
+## Análisis de logs
+
+En modo dueño, Jano revisa por voz los registros de las aplicaciones y de la red: «analiza el log de nginx», «¿qué pasó
+en el auth log?», «busca esa dirección en la captura», «¿qué dice el SIEM?». Solo lee.
+
+Las fuentes llegan por cuatro caminos:
+
+| Camino | Para qué | Se enciende con |
+|---|---|---|
+| 📁 **Carpeta montada** | Archivos del equipo: nginx, `auth.log`, `eve.json` de Suricata, capturas `.pcap`. | `LOGS_DIR` |
+| 📨 **Envío por HTTP** | `POST /logs/<fuente>` con clave: un SIEM, Fluent Bit, Vector, n8n o un script. | `LOGS_INGEST_SECRET` |
+| 📟 **Syslog** (UDP y TCP) | Routers, cortafuegos, rsyslog, Suricata. Solo remitentes permitidos. | `LOGS_SYSLOG_PORT` |
+| 🛰️ **Consulta al SIEM** | Wazuh, Elastic Security, OpenSearch (API de búsqueda), con un usuario de solo lectura. | `SIEM_URL` |
+
+| Tipo de log | Qué detecta |
+|---|---|
+| 🌐 **Acceso web** (nginx, apache, JSON con ruta y estado) | Inyección SQL y de comandos, salto de directorios, Log4Shell, XSS, archivos sensibles expuestos (`.env`, `.git`, respaldos), búsqueda de paneles, escáneres (sqlmap, nikto, nuclei…), fuerza bruta al inicio de sesión, exploración de rutas y ráfagas de errores 5xx. |
+| 🔑 **Autenticación del sistema** (`auth.log`, `secure`) | Fuerza bruta por SSH, ingreso aceptado después de muchos fallos, ingreso de root con contraseña y fallos de sudo. |
+| 🧱 **Cortafuegos** (UFW, iptables) | Escaneos de puertos, barridos de equipos y golpes repetidos a servicios sensibles. |
+| 📡 **Captura de red** (`.pcap` o tcpdump en texto) | Escaneo SYN, barridos, inundación SYN, suplantación ARP, posibles túneles DNS, ráfagas de ping y protocolos sin cifrar. |
+| 🚨 **Suricata** (`eve.json`) y **Wazuh** (alertas en JSON) | Resumen de las alertas por firma o regla, gravedad y origen. |
+| 📄 **Aplicación** (JSON por línea o texto con niveles) | Errores y fallos fatales más repetidos, fallos de autenticación por origen y secretos escritos en el log. |
+
+Jano actúa como analista de nivel 1: revisa, clasifica e informa a Camilo; no repara ni decide. Qué debe registrar cada
+proyecto, en qué formato y cómo entregarlo está en [`docs/directrices-logs.md`](docs/directrices-logs.md).
+
+Herramientas, solo del dueño: `fuentes_de_logs` (qué archivos hay), `analizar_logs` (hallazgos, del más grave al
+menos grave; abre alertas solo si se le pide), `buscar_en_logs` (seguir una dirección, un usuario o una ruta) y
+`consultar_siem` (resumen de los eventos del SIEM por gravedad, regla, equipo y origen).
+
+```bash
+mkdir -p logs
+sudo tcpdump -nn -i any -c 5000 > logs/captura.txt        # una captura en vivo
+cp captura.pcap logs/                                      # o una captura guardada (pcap clásico)
+sudo cp /var/log/auth.log /var/log/ufw.log logs/ && sudo chown $USER logs/*
+docker logs mi-app > logs/mi-app.log 2>&1
+```
+
+En local se define `LOGS_DIR=logs`; con `docker compose` la carpeta `./logs` (o `LOGS_HOST_DIR`) ya queda montada en
+solo lectura.
+
+- **Los logs son texto de terceros.** Rutas, usuarios y agentes los escribe quien se conecta, incluido un atacante: al
+  modelo le llegan como datos, nunca como instrucciones, y en ese turno no se ejecutan acciones.
+- **Sin secretos al modelo.** Contraseñas, tokens, cookies, llaves y números de tarjeta se ocultan antes de mostrar una
+  línea; si un log los contiene, eso mismo es un hallazgo.
+- **Sin salir de la carpeta.** El nombre que pide el modelo se busca en la lista de archivos reales; no se usa como
+  ruta, y los enlaces simbólicos que apuntan fuera se ignoran. Lo que llega por la red se escribe solo en
+  `DATA_DIR/logs-recibidos`, con el nombre de la fuente reducido a letras, números y guiones.
+- **Entradas con control.** La entrada HTTP exige clave y tiene tope de envíos; syslog solo acepta los remitentes de
+  `LOGS_SYSLOG_ALLOW` (sin lista, solo redes privadas) y tiene tope de líneas por minuto. Al SIEM solo se le consulta.
+- **Un intento no es una intrusión.** La gravedad sube solo cuando hay señal de éxito: una respuesta 2xx a un ataque,
+  un ingreso después de los fallos, un archivo sensible servido.
+- Se lee el final de cada archivo (`LOGS_MAX_MB`, 4 MB por defecto), también de los `.gz`. Las reglas son por conteo
+  sobre ese tramo; no reemplazan a un SIEM ni correlacionan entre archivos.
+
 ## Cómo funciona una conversación
 
 ```mermaid
@@ -107,6 +162,7 @@ flowchart LR
 | 🛡️ **Ciberseguridad** | Contraseñas, verificación en dos pasos, phishing y estafas, copias de seguridad, redes wifi y servidores, qué hacer si hackearon una cuenta. |
 | 🏢 **Seguridad de recintos** | Dónde y cómo poner cámaras, alarmas y sensores, control de acceso, cerraduras, iluminación, rondas y protocolos ante una intrusión. |
 | 🚨 **Alertas** | Abre, cuenta y (en modo dueño) resuelve alertas; el avatar se pone en rojo mientras haya alguna abierta. |
+| 🔎 **Logs** | En modo dueño analiza logs de aplicaciones y de red (web, SSH, cortafuegos, tcpdump, Suricata) y cuenta lo más grave primero. |
 | 🗣️ **Voz en el sitio** | Español y otros idiomas, interrupciones, reacciones con emojis, fondos animados y modo espera que arranca al oír voz. |
 | 📞 **WhatsApp** | Llamadas por WebRTC y mensajes de texto, imagen y nota de voz, con la misma personalidad (opcional). |
 | 🧲 **Interesados** | Pide nombre, contacto y autorización, guarda al interesado y avisa por Telegram. No da precios que no estén en el catálogo. |
@@ -163,7 +219,7 @@ El micrófono solo funciona en `localhost` o con HTTPS. Requiere Node 20.12 o su
 Otros comandos:
 
 ```bash
-npm run verificar                 # comprueba en simulación las reglas de seguridad, decisiones y alertas
+npm run verificar                 # comprueba en simulación las reglas de seguridad, decisiones, alertas y logs
 npm run conocimiento              # carga conocimiento/publico y conocimiento/privado en Qdrant
 npm run restaurar -- <respaldo>   # restaura un respaldo en una base vacía
 npm run latencia                  # mide la latencia de voz contra el servidor en marcha
@@ -185,6 +241,10 @@ Lo demás se enciende al configurarlo:
 |---|---|
 | `ALERTS_WEBHOOK_SECRET` | Clave del webhook de alertas para sistemas externos. Vacía = webhook apagado. |
 | `OWNER_SECRET` | Modo dueño y panel. |
+| `LOGS_DIR`, `LOGS_MAX_MB` | Carpeta de logs que Jano analiza en modo dueño. |
+| `LOGS_INGEST_SECRET` | Clave de la entrada de logs por HTTP (`POST /logs/<fuente>`). Vacía = apagada. |
+| `LOGS_SYSLOG_PORT`, `LOGS_SYSLOG_ALLOW` | Receptor de syslog y remitentes aceptados. `0` = apagado. |
+| `SIEM_URL`, `SIEM_USER`, `SIEM_PASSWORD`, `SIEM_INDEX` | Consulta de solo lectura a Wazuh, Elastic u OpenSearch. |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Voz de ElevenLabs. Sin ellas (o con `TTS_PROVIDER=browser`) habla con la voz del navegador. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Avisos de alertas, interesados y respaldos por Telegram. |
 | `DATABASE_URL` | PostgreSQL. Sin ella usa SQLite en `DATA_DIR`. |
@@ -214,6 +274,7 @@ src/
   stt/ llm/ tts/   Deepgram · DeepSeek y modelo capaz · ElevenLabs
   tools/      herramientas del modelo (alertas, hora, clima, interesados, portafolio, música…)
   security/   alertas de seguridad y su webhook, "no contactar" y señal de inyección
+  logs/       análisis de logs: reglas de detección, lectura de archivos y .pcap, entrada HTTP, syslog y consulta al SIEM
   calls/      webhook de WhatsApp y llamadas por WebRTC
   whatsapp/   mensajes de WhatsApp (chat, medios, plantilla)
   leads/ visits/ portfolio/   interesados, embudo e informes, casos reales y sus fotos
