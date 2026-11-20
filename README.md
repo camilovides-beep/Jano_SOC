@@ -102,7 +102,9 @@ Las fuentes llegan por cuatro caminos:
 | 📄 **Aplicación** (JSON por línea o texto con niveles) | Errores y fallos fatales más repetidos, fallos de autenticación por origen y secretos escritos en el log. |
 
 Jano actúa como analista de nivel 1: revisa, clasifica e informa a Camilo; no repara ni decide. Qué debe registrar cada
-proyecto, en qué formato y cómo entregarlo está en [`docs/directrices-logs.md`](docs/directrices-logs.md).
+proyecto, en qué formato y cómo entregarlo está en [`docs/directrices-logs.md`](docs/directrices-logs.md). Los
+controles de seguridad que debe cumplir cada aplicación y cada servidor (ISO/IEC 27001, NIST, OWASP, CIS) están en
+[`docs/directrices-seguridad.md`](docs/directrices-seguridad.md).
 
 Herramientas, solo del dueño: `fuentes_de_logs` (qué archivos hay), `analizar_logs` (hallazgos, del más grave al
 menos grave; abre alertas solo si se le pide), `buscar_en_logs` (seguir una dirección, un usuario o una ruta) y
