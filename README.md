@@ -258,7 +258,7 @@ Lo demás se enciende al configurarlo:
 
 ## Desplegar en Easypanel
 
-1. Crear un servicio **App** desde **GitHub** (`camilovides-beep/Jano_SOC`, rama `main`) con build por **Dockerfile**.
+1. Crear un servicio **App** desde **GitHub** (`camilovides-beep/Jano_SOC`, rama `guardian`) con build por **Dockerfile**.
 2. Cargar en **Environment** las variables de `.env.example` (`PORT=3000`).
 3. Montar un volumen en `/app/data`: ahí viven la base SQLite (si no hay PostgreSQL), las fotos y los respaldos.
 4. Asignar el dominio con HTTPS al puerto `3000`. El WebSocket usa la misma URL (`wss`).
