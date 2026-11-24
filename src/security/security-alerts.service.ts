@@ -83,6 +83,26 @@ export class SecurityAlertsService implements OnApplicationBootstrap {
     return row;
   }
 
+  /**
+   * Pone al dia una alerta que sigue abierta con lo ultimo que se sabe (la usa el vigilante de logs en cada pasada).
+   * No cuenta como repeticion y solo avisa cuando la gravedad sube. Devuelve si cambio algo.
+   */
+  async refreshOpen(id: number, input: { severity: string; title: string; detail: string }): Promise<boolean> {
+    const a = await this.get(id);
+    if (!a || a.status !== 'abierta') return false;
+    const title = clip(input.title, 140) || a.title, detail = clip(input.detail, 1500) || a.detail, rank = (s: string) => SEVERITIES.indexOf(s as Severity);
+    const severity = rank(input.severity) > rank(a.severity) ? (input.severity as Severity) : a.severity;
+    if (title === a.title && detail === a.detail && severity === a.severity) return false;
+    const now = new Date().toISOString();
+    await this.db.query('UPDATE security_alerts SET title = $1, detail = $2, severity = $3, updated_at = $4 WHERE id = $5', [title, detail, severity, now, id]);
+    if (severity !== a.severity) {
+      this.log.warn(`alerta #${id} sube de ${a.severity} a ${severity}: ${title}`);
+      this.emit('repetida', { ...a, title, detail, severity, updated_at: now });
+      void this.leads.telegram(`⬆️ La alerta de seguridad #${id} subió de ${a.severity} a ${severity}${a.origin ? ` · ${a.origin}` : ''}\n${title}${detail ? `\n${detail.slice(0, 600)}` : ''}`).catch(() => undefined);
+    }
+    return true;
+  }
+
   /** Marca una alerta como resuelta. `by`: panel | voz. Devuelve la alerta o un texto si no se pudo. */
   async resolve(id: number, by: string, note = ''): Promise<SecurityAlert | string> {
     const a = await this.get(id);

@@ -1,12 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { appendFile, mkdir, open, readdir, readFile, realpath, rename, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { ConfigService } from '../config/config.service';
 import { Analysis, analyze, redact, safe } from './log-analysis';
 import { pcapToLines } from './pcap';
+import { LogDbService, LOGDB } from './log-db.service';
 
-export interface LogSource { /** Nombre con "/" (los recibidos por la red empiezan por "recibidos/"). */ name: string; size: number; mtime: Date; /** Carpeta raiz y ruta dentro de ella. */ root: string; rel: string; }
+export interface LogSource {
+  /** Nombre con "/" (los recibidos por la red empiezan por "recibidos/"; las tablas de la base de logs, por "bd/"). */ name: string;
+  /** Bytes del archivo. En una tabla, el id de su ultima fila: crece igual cuando llega algo nuevo. */ size: number; mtime: Date;
+  /** Carpeta raiz y ruta dentro de ella (vacias en una tabla). */ root: string; rel: string;
+  /** Solo en las tablas de la base de logs. */ db?: { schema: string; table: string; rows: number };
+}
 const MAX_LINES = 60_000, MAX_SOURCES = 200, MAX_GZ = 8 * 1024 * 1024, MAX_PCAP = 64 * 1024 * 1024, MAX_LINE = 8000;
 const LOG_NAME = /\.(log|txt|json|jsonl|out|gz|pcap|cap)$|(^|\/)(syslog|messages|secure|auth|kern)(\.\d+)?$|\.log\.\d+$/i;
 /** Prefijo de los logs que llegan por la red (ingesta HTTP y syslog). */
@@ -16,6 +22,7 @@ export const INBOX = 'recibidos';
  * Archivos de log que Jano puede analizar (pedido por Camilo el 2026-11-19). Hay dos carpetas:
  *  - LOGS_DIR: la que montan los proyectos. Solo se lee.
  *  - DATA_DIR/logs-recibidos: lo que llega por la red (POST /logs/<fuente> y syslog). Solo ahi se escribe.
+ * Ademas, cada tabla de la base de logs (LOGS_DB_*) es una fuente "bd/<esquema>/<tabla>"; ver LogDbService.
  * El nombre que pide el modelo se resuelve contra la lista de archivos reales, nunca se usa como ruta, y un enlace
  * simbolico que apunte fuera de la carpeta se ignora. De cada archivo se lee solo el final (LOGS_MAX_MB).
  */
@@ -23,9 +30,9 @@ export const INBOX = 'recibidos';
 export class LogsService {
   private readonly inbox: string;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private readonly cfg: ConfigService) { this.inbox = join(cfg.dataDir, 'logs-recibidos'); }
+  constructor(private readonly cfg: ConfigService, @Optional() private readonly logDb?: LogDbService) { this.inbox = join(cfg.dataDir, 'logs-recibidos'); }
   /** Hay de donde leer: una carpeta montada o un canal de entrada encendido. */
-  get enabled() { return !!this.cfg.logsDir || this.receiving; }
+  get enabled() { return !!this.cfg.logsDir || this.receiving || !!this.logDb?.enabled; }
   get receiving() { return !!this.cfg.logsIngestSecret || this.cfg.syslogPort > 0; }
 
   /** Archivos de log de las dos carpetas (hasta dos niveles), del mas reciente al mas antiguo. */
@@ -47,6 +54,7 @@ export class LogsService {
       };
       await walk(root, '', 0);
     }
+    for (const t of (await this.logDb?.tables()) ?? []) out.push({ name: `${LOGDB}/${t.schema}/${t.table}`, size: t.last, mtime: t.mtime, root: '', rel: '', db: { schema: t.schema, table: t.table, rows: t.rows } });
     return out.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
   }
 
@@ -62,8 +70,13 @@ export class LogsService {
     return near.length ? `varios archivos coinciden: ${near.slice(0, 8).map((s) => s.name).join(', ')}` : `ningún archivo coincide; los que hay: ${all.slice(0, 8).map((s) => s.name).join(', ')}`;
   }
 
-  /** Las ultimas lineas del archivo (el final, hasta LOGS_MAX_MB). Una captura .pcap se convierte a lineas de tcpdump. */
-  async tail(src: LogSource): Promise<string[]> {
+  /**
+   * Las ultimas lineas del archivo (el final, hasta LOGS_MAX_MB). Una captura .pcap se convierte a lineas de tcpdump.
+   * `from`: solo lo escrito despues de ese byte (archivos de texto sin comprimir; en los demas se ignora). En una tabla
+   * de la base de logs, solo las filas con id mayor.
+   */
+  async tail(src: LogSource, from = 0): Promise<string[]> {
+    if (src.db) { if (!this.logDb) throw new Error('la base de logs está apagada'); return this.logDb.lines(src.db.schema, src.db.table, from, MAX_LINES); } // `from` = id ya visto
     const real = await realpath(join(src.root, src.rel));
     if (!real.startsWith(src.root + sep)) throw new Error('ese archivo está fuera de la carpeta de logs');
     const max = this.cfg.logsMaxMb * 1024 * 1024;
@@ -78,7 +91,7 @@ export class LogsService {
       cut = buf.length > max; text = buf.subarray(Math.max(0, buf.length - max)).toString('utf8');
     } else {
       const fh = await open(real, 'r');
-      try { const size = (await fh.stat()).size, len = Math.min(size, max), buf = Buffer.alloc(len); await fh.read(buf, 0, len, size - len); cut = size > len; text = buf.toString('utf8'); }
+      try { const size = (await fh.stat()).size, start = from > 0 && from <= size ? from : 0, len = Math.min(size - start, max), buf = Buffer.alloc(len); await fh.read(buf, 0, len, size - len); cut = size - start > len; text = buf.toString('utf8'); }
       finally { await fh.close(); }
     }
     const lines = text.split(/\r?\n/);
@@ -86,7 +99,7 @@ export class LogsService {
     return lines.filter((l) => l.length > 0).slice(-MAX_LINES);
   }
 
-  async analyze(src: LogSource): Promise<Analysis> { return analyze(await this.tail(src)); }
+  async analyze(src: LogSource, from = 0): Promise<Analysis> { return analyze(await this.tail(src, from)); }
 
   /** Busca un texto literal (sin expresiones regulares) y devuelve cuantas lineas coinciden y las ultimas, sin secretos. */
   async search(src: LogSource, text: string, max = 12): Promise<{ total: number; lines: string[] }> {

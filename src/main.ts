@@ -18,6 +18,11 @@ async function bootstrap() {
   app.useWebSocketAdapter(new WsAdapter(app));
   // Entrada de logs (POST /logs/<fuente>): ademas de JSON acepta texto, una linea por evento.
   app.useBodyParser('text', { type: ['text/plain', 'application/x-ndjson'], limit: '1mb' });
+  // Consola SOC: sus respuestas llevan datos de seguridad, asi que no se guardan en cache ni se muestran dentro de otro sitio.
+  app.use('/soc', (_req: unknown, res: { setHeader(k: string, v: string): void }, next: () => void) => {
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
+    next();
+  });
   app.enableShutdownHooks();
   const cfg = app.get(ConfigService);
   await app.listen(cfg.port, '0.0.0.0');

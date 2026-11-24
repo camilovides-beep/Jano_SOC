@@ -109,10 +109,30 @@ export class ConfigService {
   readonly publicUrl: string;
   /** Clave del webhook de alertas (POST /alertas, cabecera X-Alert-Secret). Vacia = webhook apagado. */
   readonly alertsWebhookSecret: string;
+  /** Consola SOC (public/soc.html): usuario y contraseña provisionales. Sin los dos, la consola queda apagada. */
+  readonly socUser: string;
+  readonly socPassword: string;
+  /** Vida total de una sesion de la consola y minutos sin uso antes de cerrarla. */
+  readonly socSessionHours: number;
+  readonly socIdleMinutes: number;
   /** Carpeta con los logs de aplicaciones y de red que Jano puede analizar en modo dueño (solo lectura). Vacia = sin analisis de logs. */
   readonly logsDir: string;
   /** Cuanto se lee del final de cada archivo de log, en MB. */
   readonly logsMaxMb: number;
+  /** Cada cuantos minutos el vigilante analiza los logs que cambiaron y abre alertas. 0 = apagado. */
+  readonly logsWatchMinutes: number;
+  /** Gravedad minima de un hallazgo para que el vigilante abra una alerta. */
+  readonly logsWatchSeverity: 'baja' | 'media' | 'alta' | 'critica';
+  /** Base de datos de logs (PostgreSQL): cada tabla de los esquemas de logsDbSchemas es una fuente. Sin host = apagada. */
+  readonly logsDbHost: string;
+  readonly logsDbPort: number;
+  readonly logsDbName: string;
+  readonly logsDbUser: string;
+  readonly logsDbPassword: string;
+  readonly logsDbSchemas: string[];
+  readonly logsDbSsl: boolean;
+  /** Cuantas filas se leen del final de cada tabla. */
+  readonly logsDbMaxRows: number;
   /** Clave de la entrada de logs por HTTP (POST /logs/<fuente>, cabecera X-Logs-Secret). Vacia = entrada apagada. */
   readonly logsIngestSecret: string;
   /** Tamaño al que rota cada archivo de logs recibidos por la red, en MB. */
@@ -262,8 +282,23 @@ export class ConfigService {
     this.wakeWords = (process.env.WAKE_WORDS || 'jano,yano,hano,janos').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',').map((w) => w.trim()).filter(Boolean);
     this.publicUrl = str('PUBLIC_URL').replace(/\/+$/, '');
     this.alertsWebhookSecret = str('ALERTS_WEBHOOK_SECRET');
+    this.socUser = str('SOC_USER').toLowerCase();
+    this.socPassword = process.env.SOC_PASSWORD ?? ''; // sin recortar: una contraseña puede llevar espacios
+    this.socSessionHours = int('SOC_SESSION_HOURS', 12, 1);
+    this.socIdleMinutes = int('SOC_IDLE_MINUTES', 60, 5);
     this.logsDir = str('LOGS_DIR');
     this.logsMaxMb = int('LOGS_MAX_MB', 4, 1);
+    this.logsWatchMinutes = int('LOGS_WATCH_MINUTES', 5, 0);
+    const watchSev = str('LOGS_WATCH_SEVERITY', 'alta').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    this.logsWatchSeverity = (['baja', 'media', 'alta', 'critica'] as const).find((s) => s === watchSev) ?? 'alta';
+    this.logsDbHost = str('LOGS_DB_HOST');
+    this.logsDbPort = int('LOGS_DB_PORT', 5432, 1);
+    this.logsDbName = str('LOGS_DB_NAME');
+    this.logsDbUser = str('LOGS_DB_USER');
+    this.logsDbPassword = process.env.LOGS_DB_PASS ?? '';
+    this.logsDbSchemas = str('LOGS_DB_SCHEMAS', 'apps,servers').split(',').map((x) => x.trim()).filter((x) => /^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(x));
+    this.logsDbSsl = /^(1|true|si|sí|on)$/i.test(str('LOGS_DB_SSL'));
+    this.logsDbMaxRows = Math.min(60_000, int('LOGS_DB_MAX_ROWS', 20_000, 100));
     this.logsIngestSecret = str('LOGS_INGEST_SECRET');
     this.logsInboxMaxMb = int('LOGS_INBOX_MAX_MB', 20, 1);
     this.syslogPort = int('LOGS_SYSLOG_PORT', 0);

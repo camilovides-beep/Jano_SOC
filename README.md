@@ -83,18 +83,19 @@ detalles: es lo que consulta cada pantalla.
 En modo dueño, Jano revisa por voz los registros de las aplicaciones y de la red: «analiza el log de nginx», «¿qué pasó
 en el auth log?», «busca esa dirección en la captura», «¿qué dice el SIEM?». Solo lee.
 
-Las fuentes llegan por cuatro caminos:
+Las fuentes llegan por cinco caminos:
 
 | Camino | Para qué | Se enciende con |
 |---|---|---|
 | 📁 **Carpeta montada** | Archivos del equipo: nginx, `auth.log`, `eve.json` de Suricata, capturas `.pcap`. | `LOGS_DIR` |
+| 🗄️ **Base de datos de logs** | PostgreSQL donde cada aplicación o servidor escribe en su tabla. Cada tabla de los esquemas indicados es una fuente `bd/<esquema>/<tabla>`. Solo lectura. | `LOGS_DB_HOST` |
 | 📨 **Envío por HTTP** | `POST /logs/<fuente>` con clave: un SIEM, Fluent Bit, Vector, n8n o un script. | `LOGS_INGEST_SECRET` |
 | 📟 **Syslog** (UDP y TCP) | Routers, cortafuegos, rsyslog, Suricata. Solo remitentes permitidos. | `LOGS_SYSLOG_PORT` |
 | 🛰️ **Consulta al SIEM** | Wazuh, Elastic Security, OpenSearch (API de búsqueda), con un usuario de solo lectura. | `SIEM_URL` |
 
 | Tipo de log | Qué detecta |
 |---|---|
-| 🌐 **Acceso web** (nginx, apache, JSON con ruta y estado) | Inyección SQL y de comandos, salto de directorios, Log4Shell, XSS, archivos sensibles expuestos (`.env`, `.git`, respaldos), búsqueda de paneles, escáneres (sqlmap, nikto, nuclei…), fuerza bruta al inicio de sesión, exploración de rutas y ráfagas de errores 5xx. |
+| 🌐 **Acceso web** (nginx, apache, JSON con ruta y estado) | Inyección SQL y de comandos, salto de directorios, Log4Shell, XSS, archivos sensibles expuestos (`.env`, `.git`, respaldos), búsqueda de paneles, herramientas de escaneo (sqlmap, nikto, nuclei…) y rastreadores de internet (Censys, Shodan…) por separado, fuerza bruta y relleno de credenciales en el inicio de sesión, exploración de rutas (muchas rutas distintas, con aviso si el barrido viene de una misma red), recorrido de rutas protegidas sin sesión y ráfagas de errores 5xx. También lo que parece ataque y no lo es: una sesión vencida que sigue consultando y un cliente que insiste en una ruta que no existe (gravedad baja). |
 | 🔑 **Autenticación del sistema** (`auth.log`, `secure`) | Fuerza bruta por SSH, ingreso aceptado después de muchos fallos, ingreso de root con contraseña y fallos de sudo. |
 | 🧱 **Cortafuegos** (UFW, iptables) | Escaneos de puertos, barridos de equipos y golpes repetidos a servicios sensibles. |
 | 📡 **Captura de red** (`.pcap` o tcpdump en texto) | Escaneo SYN, barridos, inundación SYN, suplantación ARP, posibles túneles DNS, ráfagas de ping y protocolos sin cifrar. |
@@ -107,8 +108,23 @@ controles de seguridad que debe cumplir cada aplicación y cada servidor (ISO/IE
 [`docs/directrices-seguridad.md`](docs/directrices-seguridad.md).
 
 Herramientas, solo del dueño: `fuentes_de_logs` (qué archivos hay), `analizar_logs` (hallazgos, del más grave al
-menos grave; abre alertas solo si se le pide), `buscar_en_logs` (seguir una dirección, un usuario o una ruta) y
+menos grave; a pedido abre alertas solo si se le dice, aparte de las que abre el vigilante), `buscar_en_logs` (seguir una dirección, un usuario o una ruta) y
 `consultar_siem` (resumen de los eventos del SIEM por gravedad, regla, equipo y origen).
+
+### El vigilante de logs
+
+El análisis no espera a que alguien lo pida: cada `LOGS_WATCH_MINUTES` (5 por defecto) Jano revisa las fuentes que
+cambiaron y abre una alerta de seguridad por cada hallazgo de gravedad `LOGS_WATCH_SEVERITY` (`alta` por defecto) o
+más. La alerta llega por Telegram, pone a Jano en rojo y aparece en la consola con el origen `Logs: <fuente>`.
+
+- **Una alerta por hallazgo, no por pasada.** El mismo hallazgo (misma fuente y misma regla; y misma dirección, en las
+  reglas que dan uno por dirección) actualiza su alerta mientras siga abierta: título, detalle y gravedad si sube.
+- **Resolver es dar por atendido.** Lo que ya estaba en el archivo no vuelve a alertar. Solo se abre otra alerta si la
+  regla salta de nuevo mirando únicamente las líneas escritas después.
+- **Un archivo sin cambios no se relee**, y las copias rotadas o comprimidas (`.1`, `.gz`) no se vigilan: ya se
+  revisaron cuando eran el archivo vivo. Una captura `.pcap` que cambia cuenta como nueva.
+- Lo que el vigilante recuerda queda en `DATA_DIR/log-watch.json`; un reinicio no duplica ni reabre alertas.
+- `LOGS_WATCH_MINUTES=0` lo apaga. En la consola, **Logs → Revisar ahora** corre una pasada sin esperar.
 
 ```bash
 mkdir -p logs
@@ -132,6 +148,9 @@ solo lectura.
   `LOGS_SYSLOG_ALLOW` (sin lista, solo redes privadas) y tiene tope de líneas por minuto. Al SIEM solo se le consulta.
 - **Un intento no es una intrusión.** La gravedad sube solo cuando hay señal de éxito: una respuesta 2xx a un ataque,
   un ingreso después de los fallos, un archivo sensible servido.
+- **La base de logs solo se lee.** La sesión abre en modo de solo lectura, las tablas salen del catálogo de PostgreSQL
+  (nunca de un nombre que llegue de fuera) y se leen las últimas `LOGS_DB_MAX_ROWS` filas de cada una. Conviene un
+  usuario con permiso de `SELECT` nada más y conexión cifrada (`LOGS_DB_SSL=1`).
 - Se lee el final de cada archivo (`LOGS_MAX_MB`, 4 MB por defecto), también de los `.gz`. Las reglas son por conteo
   sobre ese tramo; no reemplazan a un SIEM ni correlacionan entre archivos.
 
@@ -190,6 +209,30 @@ Pestañas: **Alertas** (abiertas y resueltas, crear una a mano, instrucciones de
 conversaciones, interesados con estado y notas, visitas resumidas, transcripciones de llamadas y chats, portafolio con
 fotos, catálogo de precios, aprobaciones, autonomía, bitácora, decisiones, consumo y dispositivos.
 
+## La consola SOC
+
+`/soc.html` es la pantalla de monitoreo: se abre en un monitor y se deja a la vista. Se pone en rojo, igual que Jano,
+mientras haya una alerta abierta, y se actualiza sola cada 10 segundos.
+
+| Sección | Qué muestra |
+|---|---|
+| **Resumen** | Alertas abiertas por gravedad, alertas nuevas por día (14 días), de dónde vienen, canales de entrada encendidos, servicios vigilados, integridad de la bitácora e ingresos fallidos. |
+| **Alertas** | Todas las alertas con filtros; abrir una a mano y marcarlas como resueltas (queda anotado quién). |
+| **Logs** | Las fuentes de logs, sus hallazgos del más grave al menos grave, una búsqueda de texto y el estado del vigilante, con un botón para revisar ahora. |
+| **SIEM** | Eventos del SIEM por gravedad, regla, equipo y origen, si `SIEM_URL` está definida. |
+| **Integridad** | La bitácora encadenada de lo que Jano hizo por su cuenta y si alguien la alteró. |
+| **Accesos** | Sesiones de la consola, intentos de ingreso y dispositivos del dueño. |
+
+**Ingreso provisional.** No hay registro de usuarios: existe una sola cuenta, `SOC_USER` y `SOC_PASSWORD` (15 caracteres
+o más), mientras la consola está en desarrollo. Sin esas variables la consola queda apagada.
+
+- Cinco fallos seguidos bloquean la dirección con espera creciente (1, 2, 4… hasta 30 minutos) y abren una alerta.
+- La sesión vive en el servidor, va en una cookie `HttpOnly` y `SameSite=Strict`, vence a los 60 minutos sin uso o a las
+  12 horas, y se invalida al cerrar sesión. Un reinicio del servidor cierra todas las sesiones.
+- La página no carga nada de otros sitios (CSP) y todo lo que escribe un tercero se pinta como texto.
+- **Antes de exponerla a internet** hay que cambiar la cuenta provisional por cuentas personales, con contraseñas
+  guardadas con Argon2id y segundo factor (`APP-02` y `APP-03` de las directrices).
+
 ## Seguridad y límites
 
 - **El texto de afuera es dato.** Lo que dice un visitante, una alerta de un sistema externo o un mensaje nunca se
@@ -243,7 +286,10 @@ Lo demás se enciende al configurarlo:
 |---|---|
 | `ALERTS_WEBHOOK_SECRET` | Clave del webhook de alertas para sistemas externos. Vacía = webhook apagado. |
 | `OWNER_SECRET` | Modo dueño y panel. |
+| `SOC_USER`, `SOC_PASSWORD` | Cuenta provisional de la consola SOC (`/soc.html`). Sin ellas, la consola queda apagada. |
 | `LOGS_DIR`, `LOGS_MAX_MB` | Carpeta de logs que Jano analiza en modo dueño. |
+| `LOGS_WATCH_MINUTES`, `LOGS_WATCH_SEVERITY` | Cada cuánto el vigilante revisa los logs y desde qué gravedad abre una alerta. `0` = apagado. |
+| `LOGS_DB_HOST`, `LOGS_DB_PORT`, `LOGS_DB_NAME`, `LOGS_DB_USER`, `LOGS_DB_PASS`, `LOGS_DB_SCHEMAS`, `LOGS_DB_SSL`, `LOGS_DB_MAX_ROWS` | Base de datos de logs (PostgreSQL) y esquemas cuyas tablas se analizan. Sin host = apagada. |
 | `LOGS_INGEST_SECRET` | Clave de la entrada de logs por HTTP (`POST /logs/<fuente>`). Vacía = apagada. |
 | `LOGS_SYSLOG_PORT`, `LOGS_SYSLOG_ALLOW` | Receptor de syslog y remitentes aceptados. `0` = apagado. |
 | `SIEM_URL`, `SIEM_USER`, `SIEM_PASSWORD`, `SIEM_INDEX` | Consulta de solo lectura a Wazuh, Elastic u OpenSearch. |
@@ -282,6 +328,7 @@ src/
   leads/ visits/ portfolio/   interesados, embudo e informes, casos reales y sus fotos
   knowledge/  base de conocimiento (Qdrant)
   owner/      panel y dispositivos del dueño
+  soc/        consola de monitoreo: ingreso provisional y datos de la pantalla
   decisions/  capa de decisiones (Jev o DeepSeek), con registro y umbrales
   settings/   ajustes que se cambian desde el panel
   policy/     límites de autonomía, puerta de acciones, aprobaciones, catálogo y bitácora

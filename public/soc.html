@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0a0d11">
+  <title>Jano SOC · Consola de monitoreo</title>
+  <link rel="stylesheet" href="./css/soc.css">
+</head>
+<body data-state="calma">
+  <!-- Ingreso: una sola cuenta provisional; no hay registro. -->
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="eyes big" aria-hidden="true"><i></i><i></i></div>
+      <h1>Jano SOC</h1>
+      <p class="kicker">Physical-Cyber Watch · Consola de monitoreo</p>
+      <label for="user">Usuario</label>
+      <input id="user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="80" required>
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+      <button id="login-btn" type="submit">Entrar</button>
+      <p id="login-error" class="error" role="alert"></p>
+      <p class="note">Acceso provisional mientras la consola está en desarrollo. No hay registro de usuarios.</p>
+    </form>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <aside class="side">
+      <div class="brand">
+        <div class="eyes" aria-hidden="true"><i></i><i></i></div>
+        <div><b>Jano SOC</b><span>Physical-Cyber Watch</span></div>
+      </div>
+      <nav id="nav" class="nav" aria-label="Secciones">
+        <button data-view="resumen" aria-current="page">Resumen</button>
+        <button data-view="alertas">Alertas <span id="nav-alerts" class="count" hidden></span></button>
+        <button data-view="logs">Logs</button>
+        <button data-view="siem">SIEM</button>
+        <button data-view="integridad">Integridad</button>
+        <button data-view="accesos">Accesos</button>
+      </nav>
+      <div class="side-foot">
+        <span id="who" class="who"></span>
+        <span id="expires" class="muted"></span>
+        <button id="logout" class="ghost small">Cerrar sesión</button>
+        <a href="./">Ir al avatar</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="rail" id="rail" role="status" aria-live="polite">
+        <div class="rail-state">
+          <span class="pulse" aria-hidden="true"></span>
+          <div><b id="rail-title">En calma</b><span id="rail-sub">Sin alertas abiertas</span></div>
+        </div>
+        <div class="rail-meta"><span id="clock"></span><span id="updated" class="muted"></span></div>
+      </header>
+      <p id="banner" class="banner" role="alert" hidden></p>
+
+      <!-- ===== Resumen ===== -->
+      <section data-view="resumen" class="view">
+        <div class="tiles" id="sev-tiles"></div>
+        <div class="grid two">
+          <article class="card">
+            <header><h2>Alertas nuevas por día</h2><span class="muted">Últimos 14 días</span></header>
+            <div class="legend"><span><i class="sw low"></i>Baja y media</span><span><i class="sw high"></i>Alta y crítica</span></div>
+            <div id="chart" class="chart"></div>
+            <div class="facts" id="facts"></div>
+          </article>
+          <article class="card">
+            <header><h2>Alertas abiertas</h2><button class="link" data-go="alertas">Ver todas</button></header>
+            <ul id="open-list" class="list"></ul>
+          </article>
+        </div>
+        <div class="grid three">
+          <article class="card">
+            <header><h2>De dónde vienen</h2><span class="muted">30 días</span></header>
+            <div id="by-source" class="bars"></div>
+          </article>
+          <article class="card">
+            <header><h2>Canales de entrada</h2></header>
+            <ul id="channels" class="checks"></ul>
+          </article>
+          <article class="card">
+            <header><h2>Servicios vigilados</h2></header>
+            <ul id="services" class="checks"></ul>
+          </article>
+        </div>
+        <div class="tiles" id="sys-tiles"></div>
+      </section>
+
+      <!-- ===== Alertas ===== -->
+      <section data-view="alertas" class="view" hidden>
+        <article class="card">
+          <header><h2>Alertas de seguridad</h2><button id="alert-new-toggle" class="small">Nueva alerta</button></header>
+          <form id="alert-form" class="form" hidden>
+            <input id="alert-title" placeholder="Título (ej. Puerta de la bodega forzada)" maxlength="140" required>
+            <textarea id="alert-detail" placeholder="Detalle (opcional)" maxlength="1500" rows="2"></textarea>
+            <div class="row">
+              <select id="alert-severity" aria-label="Gravedad"><option value="baja">Baja</option><option value="media" selected>Media</option><option value="alta">Alta</option><option value="critica">Crítica</option></select>
+              <input id="alert-origin" placeholder="Origen (opcional)" maxlength="120">
+              <button type="submit" class="small">Abrir alerta</button>
+            </div>
+            <p id="alert-msg" class="error" role="alert"></p>
+          </form>
+          <div class="filters">
+            <select id="f-status" aria-label="Estado"><option value="">Todas</option><option value="abierta" selected>Abiertas</option><option value="resuelta">Resueltas</option></select>
+            <select id="f-severity" aria-label="Gravedad"><option value="">Cualquier gravedad</option><option value="critica">Crítica</option><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select>
+            <input id="f-text" type="search" placeholder="Buscar en título, detalle u origen">
+          </div>
+          <p id="alerts-count" class="muted"></p>
+          <ul id="alerts-list" class="list"></ul>
+        </article>
+      </section>
+
+      <!-- ===== Logs ===== -->
+      <section data-view="logs" class="view" hidden>
+        <div class="grid two wide-right">
+          <article class="card">
+            <header><h2>Fuentes</h2><span id="logs-note" class="muted"></span></header>
+            <div class="watch">
+              <p id="watch-note" class="muted"></p>
+              <button id="watch-run" class="ghost small" hidden>Revisar ahora</button>
+            </div>
+            <ul id="log-sources" class="list compact"></ul>
+          </article>
+          <article class="card">
+            <header><h2 id="log-title">Análisis</h2><span id="log-period" class="muted"></span></header>
+            <p id="log-empty" class="muted">Elige una fuente para analizarla. Solo se lee: nada se modifica ni se envía.</p>
+            <div id="log-body" hidden>
+              <div class="facts" id="log-facts"></div>
+              <h3>Hallazgos</h3>
+              <ul id="log-findings" class="list"></ul>
+              <h3>Cifras</h3>
+              <ul id="log-stats" class="plain"></ul>
+              <h3>Buscar en este log</h3>
+              <form id="log-search" class="row">
+                <input id="log-q" type="search" placeholder="Dirección, usuario o ruta (texto literal)" minlength="2" maxlength="80" required>
+                <button type="submit" class="small">Buscar</button>
+              </form>
+              <p id="log-hits" class="muted"></p>
+              <pre id="log-lines" class="lines" hidden></pre>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ===== SIEM ===== -->
+      <section data-view="siem" class="view" hidden>
+        <article class="card">
+          <header><h2>Eventos del SIEM</h2>
+            <form id="siem-form" class="row">
+              <select id="siem-hours" aria-label="Periodo"><option value="1">Última hora</option><option value="6">6 horas</option><option value="24" selected>24 horas</option><option value="72">3 días</option><option value="168">7 días</option></select>
+              <input id="siem-q" type="search" placeholder="Filtro (opcional)" maxlength="200">
+              <button type="submit" class="small">Consultar</button>
+            </form>
+          </header>
+          <p id="siem-msg" class="muted"></p>
+          <div id="siem-body" hidden>
+            <div class="tiles" id="siem-tiles"></div>
+            <h3>Reglas, de la más grave a la menos grave</h3>
+            <div class="scroll"><table id="siem-rules"></table></div>
+            <div class="grid two">
+              <div><h3>Equipos con más eventos</h3><div id="siem-hosts" class="bars"></div></div>
+              <div><h3>Orígenes con más eventos</h3><div id="siem-origins" class="bars"></div></div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- ===== Integridad ===== -->
+      <section data-view="integridad" class="view" hidden>
+        <div class="tiles" id="chain-tiles"></div>
+        <article class="card">
+          <header><h2>Bitácora de acciones autónomas</h2><span class="muted">30 días · solo lectura</span></header>
+          <p class="muted">Cada fila guarda la huella de la anterior. Si alguien cambia o borra una, la cadena se rompe y aquí se ve.</p>
+          <div class="scroll"><table id="actions-table"></table></div>
+        </article>
+      </section>
+
+      <!-- ===== Accesos ===== -->
+      <section data-view="accesos" class="view" hidden>
+        <div class="grid">
+          <article class="card">
+            <header><h2>Sesiones de la consola</h2></header>
+            <div class="scroll"><table id="sessions-table"></table></div>
+          </article>
+          <article class="card">
+            <header><h2>Dispositivos del dueño</h2></header>
+            <div class="scroll"><table id="devices-table"></table></div>
+          </article>
+        </div>
+        <article class="card">
+          <header><h2>Intentos de ingreso a la consola</h2><span class="muted">Desde el último reinicio</span></header>
+          <div class="scroll"><table id="events-table"></table></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div id="tip" class="tip" hidden></div>
+  <script type="module" src="./js/soc.js"></script>
+</body>
+</html>

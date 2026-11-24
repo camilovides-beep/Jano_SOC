@@ -350,7 +350,7 @@ export class ToolsService {
         run: async () => {
           const all = await logs.sources();
           if (!all.length) return 'Todavía no hay archivos de log: ni en la carpeta montada (LOGS_DIR) ni recibidos por la red. Dile que copie o monte ahí los logs, o que sus equipos los envíen por HTTP o syslog.';
-          return `Hay ${all.length} archivos de log:\n` + all.slice(0, 25).map((s) => `- ${s.name} · ${size(s.size)} · modificado ${s.mtime.toISOString().slice(0, 16).replace('T', ' ')} UTC`).join('\n') + '\nNombra los tres o cuatro más recientes y pregunta cuál analizar; no leas tamaños ni fechas completas.';
+          return `Hay ${all.length} archivos de log:\n` + all.slice(0, 25).map((s) => `- ${s.name} · ${s.db ? `${s.db.rows} filas` : size(s.size)} · modificado ${s.mtime.toISOString().slice(0, 16).replace('T', ' ')} UTC`).join('\n') + '\nNombra los tres o cuatro más recientes y pregunta cuál analizar; no leas tamaños ni fechas completas.';
         },
       };
       this.ownerTools.analizar_logs = {

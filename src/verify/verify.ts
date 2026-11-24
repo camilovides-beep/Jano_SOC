@@ -707,6 +707,51 @@ async function main() {
     for (const x of await sec.list(100, 'abierta')) await sec.resolve(x.id, 'panel');
     return 'abre, suma repeticiones sin duplicar, avisa una vez, tope por hora, visitantes no resuelven, webhook solo con clave';
   });
+  // ---------- Consola SOC: ingreso con la cuenta provisional ----------
+  await check('Consola SOC: sin registro, freno a la fuerza bruta, sesiones que vencen y acciones solo con sesión', async () => {
+    const { SecurityAlertsService } = await import('../security/security-alerts.service');
+    const { SocAuthService, SOC_COOKIE } = await import('../soc/soc-auth.service');
+    const { SocController } = await import('../soc/soc.controller');
+    const sec = new SecurityAlertsService(P.cfg, P.db, P.leads); await sec.onApplicationBootstrap();
+    const cfgAs = (o: object) => Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { socSessionHours: 12, socIdleMinutes: 60 }, o);
+    must(!new SocAuthService(cfgAs({ socUser: '', socPassword: '' }), sec).enabled, 'sin SOC_USER y SOC_PASSWORD la consola debería estar apagada');
+    must(!new SocAuthService(cfgAs({ socUser: 'jano', socPassword: 'corta' }), sec).enabled, 'aceptó una contraseña de menos de 15 caracteres');
+    const pass = 'una-clave-larga-de-prueba', auth = new SocAuthService(cfgAs({ socUser: 'jano', socPassword: pass }), sec);
+    let t = Date.parse('2026-11-24T10:00:00Z'); auth.now = () => t;
+    const bad = auth.login('jano', 'equivocada', '203.0.113.50'), other = auth.login('otro', pass, '203.0.113.50');
+    must('error' in bad && 'error' in other && bad.error === 'credenciales' && other.error === 'credenciales', 'el error distingue entre usuario y contraseña equivocados');
+    for (let i = 0; i < 3; i++) auth.login('jano', 'equivocada', '203.0.113.50');
+    await wait(50);
+    const locked = auth.login('jano', pass, '203.0.113.50');
+    must('error' in locked && locked.error === 'bloqueado' && auth.blockedFor('203.0.113.50') > 0, 'tras 5 fallos la dirección no quedó bloqueada (ni con la contraseña buena)');
+    must((await sec.list(10, 'abierta')).some((a) => a.origin === 'Consola SOC'), 'el bloqueo no abrió una alerta de seguridad');
+    const ok = auth.login(' JANO ', pass, '198.51.100.9');
+    must('token' in ok, 'no entró con el usuario y la contraseña correctos');
+    const cookie = `otra=1; ${SOC_COOKIE}=${'token' in ok ? ok.token : ''}`;
+    must(auth.verify(cookie)?.user === 'jano' && !auth.verify(`${SOC_COOKIE}=inventado`) && !auth.verify(undefined), 'la sesión no se valida bien');
+    // Las consultas automaticas no cuentan como actividad: una pestaña olvidada vence por inactividad.
+    t += 50 * 60_000; must(auth.verify(cookie, false), 'la sesión venció antes de tiempo');
+    t += 11 * 60_000; must(!auth.verify(cookie), 'la sesión no venció tras 60 minutos sin actividad');
+    const again = auth.login('jano', pass, '198.51.100.9'), c2 = `${SOC_COOKIE}=${'token' in again ? again.token : ''}`;
+    t += 13 * 3600_000; must(!auth.verify(c2), 'la sesión no venció por tiempo total');
+    const last = auth.login('jano', pass, '198.51.100.9'), c3 = `${SOC_COOKIE}=${'token' in last ? last.token : ''}`;
+    must(auth.logout(c3) && !auth.verify(c3), 'cerrar sesión no la invalidó');
+    // El controlador: nada sin sesion, y lo que cambia datos exige ademas la cabecera que frena el CSRF.
+    const live = auth.login('jano', pass, '198.51.100.9'), c4 = `${SOC_COOKIE}=${'token' in live ? live.token : ''}`;
+    const ctl = new SocController(cfgAs({}), auth, sec, { sources: async () => [], enabled: false, receiving: false } as any, { enabled: false } as any, P.actions, P.approvals, { status: () => ({}), enabled: false } as any, { list: () => [] } as any, P.db, { enabled: false, status: () => ({ enabled: false }) } as any, { enabled: false, error: '', label: '' } as any);
+    const req = (cookie: string, csrf = true) => ({ headers: { cookie, ...(csrf ? { 'x-requested-with': 'jano-soc' } : {}) }, socket: { remoteAddress: '198.51.100.9' } }) as any;
+    const status = async (fn: () => unknown) => { try { await fn(); return 200; } catch (e: any) { return e?.getStatus?.() ?? 500; } };
+    must((await status(() => ctl.overview(req('')))) === 401 && (await status(() => ctl.alertList(req('')))) === 401 && (await status(() => ctl.access(req('')))) === 401, 'la consola respondió sin sesión');
+    must((await status(() => ctl.alertAdd(req(c4, false), { title: 'Prueba sin cabecera' }))) === 403, 'aceptó una acción sin la cabecera contra CSRF');
+    must((await status(() => ctl.logAnalyze(req(c4), '../../etc/passwd'))) === 404, 'aceptó un nombre de log que no está en la lista');
+    const made: any = await ctl.alertAdd(req(c4), { title: 'Prueba desde la consola', severity: 'baja' });
+    const over: any = await ctl.overview(req(c4));
+    must(made.ok && over.alerts.active >= 1 && over.alerts.days.length === 14 && typeof over.integrity.ok === 'boolean', 'el resumen de la consola no refleja la alerta nueva');
+    const done: any = await ctl.alertResolve(req(c4), String(made.alert.id), { note: 'prueba' });
+    must(done.alert.status === 'resuelta' && done.alert.resolved_by === 'soc:jano', 'no quedó anotado quién resolvió la alerta');
+    for (const x of await sec.list(100, 'abierta')) await sec.resolve(x.id, 'panel', 'prueba');
+    return 'una sola cuenta provisional, mismo error para usuario y contraseña, bloqueo con alerta tras 5 fallos, vence por inactividad y por tiempo, CSRF y nombres de log controlados';
+  });
   // ---------- Analisis de logs de aplicaciones y de red (modo dueño, solo lectura) ----------
   await check('Logs: detecta ataques en web, SSH, cortafuegos y red; solo el dueño, sin secretos y sin salir de la carpeta', async () => {
     const { mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
@@ -770,6 +815,87 @@ async function main() {
     must(sec.active > before && /alerta/.test(alerted.text) && (await sec.list(5, 'abierta'))[0].source === 'sistema', 'con alertar no abrió la alerta');
     for (const x of await sec.list(100, 'abierta')) await sec.resolve(x.id, 'panel', 'prueba');
     return 'inyección SQL, archivos expuestos, fuerza bruta web y SSH, escaneo de puertos, ARP y protocolos sin cifrar; secretos ocultos; enlaces y rutas de fuera rechazados';
+  });
+  await check('Reglas afinadas con logs reales: una sesión vencida no es fuerza bruta y una ruta rota no es exploración', async () => {
+    const { analyze } = await import('../logs/log-analysis');
+    const row = (o: object) => JSON.stringify({ timestamp: '2026-11-24T13:00:00+00:00', level: 'info', msg: 'ok', method: 'GET', user_agent: 'Mozilla/5.0', ...o });
+    const rules = (lines: string[]) => analyze(lines).findings, has = (f: { rule: string; severity: string }[], rule: string, sev?: string) => f.some((x) => x.rule === rule && (!sev || x.severity === sev));
+    // Una pestaña con la sesión vencida que consulta cada minuto: 401 "unauthorized" siempre en la misma ruta.
+    const stale = rules(Array.from({ length: 300 }, () => row({ level: 'warn', msg: 'unauthorized', ip: '198.51.100.20', path: '/api/v1/notificaciones/no-leidas', status: 401 })));
+    must(has(stale, 'web_sesion_vencida', 'baja') && !has(stale, 'app_fallos_acceso') && !has(stale, 'web_fuerza_bruta'), `la sesión vencida se tomó por fuerza bruta: ${stale.map((x) => x.rule).join(', ')}`);
+    // Contraseñas rechazadas de verdad: se cuentan una sola vez, como fuerza bruta web.
+    const brute = rules([...Array.from({ length: 12 }, () => row({ level: 'warn', msg: 'login failed', ip: '203.0.113.60', method: 'POST', path: '/api/auth/login', status: 401 })), row({ msg: 'inicio de sesión correcto', ip: '203.0.113.60', method: 'POST', path: '/api/auth/login', status: 200 })]);
+    must(has(brute, 'web_fuerza_bruta', 'alta') && !has(brute, 'app_fallos_acceso'), `la fuerza bruta web salió duplicada o no salió: ${brute.map((x) => x.rule).join(', ')}`);
+    must(has(rules(Array.from({ length: 12 }, () => row({ level: 'warn', msg: 'login failed', ip: '203.0.113.61', method: 'POST', path: '/api/entrar', status: 401 }))), 'web_fuerza_bruta'), 'un "login failed" en una ruta con otro nombre no contó como contraseña fallida');
+    must(has(rules(Array.from({ length: 60 }, (_, i) => row({ level: 'warn', msg: 'login failed', ip: `203.0.113.${100 + (i % 12)}`, method: 'POST', path: '/api/auth/login', status: 401 }))), 'web_relleno_credenciales'), 'no detectó fallos de ingreso repartidos entre muchas direcciones');
+    // Una integración que llama 700 veces a una ruta que no existe (solo cambia el número) no es exploración.
+    const stuck = rules(Array.from({ length: 700 }, (_, i) => row({ ip: '198.51.100.30', method: 'POST', path: `/epayco/transactions/${394600000 + (i % 5)}/sync`, status: 404, user_agent: null })));
+    must(has(stuck, 'web_ruta_rota', 'baja') && !has(stuck, 'web_exploracion'), `una ruta rota se tomó por exploración: ${stuck.map((x) => x.rule).join(', ')}`);
+    // Cuatro direcciones vecinas probando cientos de rutas distintas sí lo es, y se dice que vienen de la misma red.
+    const scan = rules(Array.from({ length: 400 }, (_, i) => row({ ip: `203.0.113.${18 + (i % 4)}`, path: `/ruta-${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + ((i >> 2) % 26))}/x${String.fromCharCode(97 + ((i >> 4) % 26))}.php`, status: 404 })));
+    must(has(scan, 'web_exploracion', 'media') && !has(scan, 'web_ruta_rota') && /203\.0\.113\.0\/24/.test(scan.find((x) => x.rule === 'web_exploracion')!.detail), `no reconoció el barrido coordinado: ${scan.map((x) => x.rule + ' ' + x.detail).join(' | ').slice(0, 300)}`);
+    // Recorrer muchas rutas protegidas sin sesión es otra cosa: alguien probando la API.
+    must(has(rules(Array.from({ length: 40 }, (_, i) => row({ level: 'warn', msg: 'unauthorized', ip: '203.0.113.70', path: `/api/v1/modulo-${String.fromCharCode(97 + (i % 20))}/datos`, status: 401 }))), 'web_sin_permiso', 'media'), 'no detectó el recorrido de rutas protegidas');
+    // Rastreadores que se identifican (baja) frente a herramientas que buscan una vulnerabilidad concreta (media).
+    const bots = rules([row({ ip: '198.51.100.40', path: '/', status: 404, user_agent: 'Mozilla/5.0 (compatible; CensysInspect/1.1; +https://about.censys.io/)' }), row({ ip: '198.51.100.41', path: '/', status: 404, user_agent: 'metabase-cve-2026-72898-detect/1.0 (benign detection probes only)' })]);
+    must(has(bots, 'web_rastreadores', 'baja') && has(bots, 'web_escaner', 'media') && !/censys/.test(bots.find((x) => x.rule === 'web_escaner')!.title), 'no separó los rastreadores de las herramientas de ataque');
+    must(has(rules([row({ ip: '198.51.100.42', path: '/_phpinfo.php', status: 200 })]), 'web_archivos', 'critica') && has(rules([row({ ip: '198.51.100.42', path: '/app_dev.php/_profiler/open', status: 404 })]), 'web_sondeo'), 'no reconoció rutas de sondeo vistas en los logs reales');
+    // En un log de texto sin ruta ni estado, "unauthorized" sigue contando como fallo de acceso.
+    must(has(rules(Array.from({ length: 12 }, () => '2026-11-24T13:00:00Z WARN unauthorized desde 203.0.113.80')), 'app_fallos_acceso'), 'dejó de contar los fallos de acceso en logs de texto');
+    return 'sesión vencida (baja) aparte de contraseñas fallidas; ruta rota aparte de exploración; barrido por red; rastreadores aparte de herramientas de ataque';
+  });
+  await check('Vigilante de logs: abre alertas solo, no las duplica, respeta las resueltas y vuelve a avisar con evidencia nueva', async () => {
+    const { mkdirSync, writeFileSync, appendFileSync } = await import('node:fs');
+    const { LogsService } = await import('../logs/logs.service');
+    const { LogWatchService } = await import('../logs/log-watch.service');
+    const { SecurityAlertsService } = await import('../security/security-alerts.service');
+    const logsDir = join(dir, 'vigilados'), dataDir = join(dir, 'vigilante'); mkdirSync(logsDir, { recursive: true });
+    const fails = (n: number, ip: string, at: number) => Array.from({ length: n }, (_, i) => `Nov 24 ${at}:${String(10 + i)}:01 srv sshd[900]: Failed password for invalid user admin${i} from ${ip} port 5555 ssh2`);
+    const attack = (ip: string, at: number, n = 8) => [...fails(n, ip, at), `Nov 24 ${at}:59:00 srv sshd[901]: Accepted password for root from ${ip} port 5556 ssh2`].join('\n') + '\n';
+    const file = join(logsDir, 'auth.log'); writeFileSync(file, attack('203.0.113.20', 10));
+    writeFileSync(join(logsDir, 'auth.log.1'), attack('203.0.113.99', 8)); // copia rotada: no se vigila
+    const cfgAs = (over: object) => Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { logsDir, dataDir, logsMaxMb: 4, logsIngestSecret: '', syslogPort: 0, logsWatchMinutes: 5, logsWatchSeverity: 'alta' }, over);
+    const sec = new SecurityAlertsService(P.cfg, P.db, P.leads); await sec.onApplicationBootstrap();
+    const mine = async (status = 'abierta') => (await sec.list(100, status)).filter((a) => a.origin === 'Logs: auth.log');
+    must(!new LogWatchService(cfgAs({ logsWatchMinutes: 0 }), new LogsService(cfgAs({})), sec).enabled, 'con LOGS_WATCH_MINUTES en 0 el vigilante debería estar apagado');
+    const watch = new LogWatchService(cfgAs({}), new LogsService(cfgAs({})), sec);
+    const p1 = await watch.run(), first = await mine();
+    must(p1.opened === 2 && first.length === 2 && first.some((a) => a.severity === 'critica') && first.every((a) => a.source === 'sistema'), `la primera pasada debía abrir 2 alertas (crítica y alta, no la media): abrió ${p1.opened}`);
+    must(!(await sec.list(100, 'abierta')).some((a) => a.origin.includes('auth.log.1')), 'vigiló una copia rotada');
+    const p2 = await watch.run();
+    must(p2.checked === 0 && p2.opened === 0, 'volvió a leer un archivo que no cambió');
+    appendFileSync(file, fails(3, '203.0.113.20', 11).join('\n') + '\n');
+    const p3 = await watch.run(), after = await mine(), crit = after.find((a) => a.severity === 'critica')!;
+    must(p3.opened === 0 && p3.updated >= 1 && after.length === 2 && crit.id === first.find((a) => a.severity === 'critica')!.id && /11 intentos/.test(crit.title), `con más líneas del mismo ataque debía actualizar la alerta, no abrir otra: ${crit.title}`);
+    // Un reinicio no duplica: el estado esta en disco.
+    appendFileSync(file, 'Nov 24 11:30:00 srv sshd[902]: Connection closed by 203.0.113.20 port 5557\n');
+    const restarted = new LogWatchService(cfgAs({}), new LogsService(cfgAs({})), sec);
+    must((await restarted.run()).opened === 0 && (await mine()).length === 2, 'tras un reinicio duplicó las alertas');
+    // Resueltas: lo que ya estaba en el archivo queda atendido aunque el archivo siga creciendo.
+    for (const a of await mine()) await sec.resolve(a.id, 'panel', 'prueba');
+    appendFileSync(file, 'Nov 24 12:00:00 srv sshd[903]: Connection closed by 198.51.100.4 port 5558\n');
+    const p5 = await restarted.run();
+    must(p5.checked === 1 && p5.opened === 0 && (await mine()).length === 0, 'reabrió una alerta resuelta sin evidencia nueva');
+    // Evidencia nueva despues de resolver: vuelve a avisar.
+    appendFileSync(file, attack('203.0.113.20', 13));
+    const p6 = await restarted.run(), again = await mine();
+    must(p6.opened === 2 && again.length === 2 && again.every((a) => !first.some((f) => f.id === a.id)), `un ataque nuevo tras resolver debía abrir alertas nuevas: abrió ${p6.opened}`);
+    must(/8 intentos/.test(again.find((a) => a.severity === 'critica')!.title), 'la alerta nueva contó también la evidencia ya atendida');
+    for (const x of await sec.list(100, 'abierta')) await sec.resolve(x.id, 'panel', 'prueba');
+    // Una tabla de la base de logs es una fuente mas: el "tamaño" es su ultimo id y solo se piden las filas siguientes.
+    const rows = [...Array.from({ length: 12 }, (_, i) => ({ id: i + 1, timestamp: '2026-11-24T10:00:00+00:00', level: 'warn', msg: 'login failed', ip: '203.0.113.50', method: 'POST', path: '/api/auth/login', status: 401, user_agent: 'x' })),
+      { id: 13, timestamp: '2026-11-24T10:01:00+00:00', level: 'info', msg: 'ok', ip: '203.0.113.50', method: 'POST', path: '/api/auth/login', status: 200, user_agent: 'x' }];
+    const asked: number[] = [];
+    const fakeDb = { enabled: true, tables: async () => [{ schema: 'apps', table: 'demo', last: rows.at(-1)!.id, rows: rows.length, mtime: new Date() }], lines: async (_s: string, _t: string, after = 0) => { asked.push(after); return rows.filter((r) => r.id > after).map((r) => JSON.stringify(r)); } } as any;
+    const dbLogs = new LogsService(cfgAs({ logsDir: '', dataDir: join(dir, 'vigilante-bd') }), fakeDb), table = (await dbLogs.sources()).find((x) => x.name === 'bd/apps/demo');
+    must(dbLogs.enabled && !!table && table.size === 13 && table.db?.rows === 13, 'la tabla de la base de logs no apareció como fuente');
+    must((await dbLogs.analyze(table!)).findings.some((f) => f.rule === 'web_fuerza_bruta' && f.severity === 'alta'), 'no analizó las filas de la tabla como un log web');
+    const dbWatch = new LogWatchService(cfgAs({ logsDir: '', dataDir: join(dir, 'vigilante-bd') }), dbLogs, sec);
+    must((await dbWatch.run()).opened === 1 && (await sec.list(10, 'abierta')).some((a) => a.origin === 'Logs: bd/apps/demo'), 'el vigilante no abrió la alerta de la tabla');
+    for (const x of await sec.list(100, 'abierta')) await sec.resolve(x.id, 'panel', 'prueba');
+    rows.push({ id: 14, timestamp: '2026-11-24T10:02:00+00:00', level: 'info', msg: 'ok', ip: '198.51.100.7', method: 'GET', path: '/', status: 200, user_agent: 'x' });
+    must((await dbWatch.run()).opened === 0 && asked.includes(13), 'con una fila nueva y sana reabrió la alerta resuelta o no pidió solo las filas nuevas');
+    return 'una alerta por hallazgo alto o crítico; se actualiza en sitio mientras siga abierta; sobrevive a un reinicio; una resuelta solo se reabre con líneas nuevas';
   });
   await check('Logs de cualquier fuente: captura .pcap, entrada HTTP con clave, syslog con lista de remitentes y consulta al SIEM', async () => {
     const { mkdirSync, writeFileSync } = await import('node:fs');

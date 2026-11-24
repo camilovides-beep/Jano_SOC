@@ -12,7 +12,7 @@
 export type Sev = 'baja' | 'media' | 'alta' | 'critica';
 export type Kind = 'web' | 'auth' | 'firewall' | 'tcpdump' | 'suricata' | 'siem' | 'app';
 export const KIND_LABEL: Record<Kind, string> = { web: 'acceso web', auth: 'autenticación del sistema', firewall: 'cortafuegos', tcpdump: 'captura de red (tcpdump)', suricata: 'alertas de Suricata', siem: 'alertas de SIEM (Wazuh)', app: 'registro de aplicación' };
-export interface Finding { rule: string; severity: Sev; title: string; detail: string; }
+export interface Finding { rule: string; severity: Sev; title: string; detail: string; /** A quien se refiere, cuando una regla puede dar varios hallazgos (una direccion). */ subject?: string; }
 export interface Analysis { lines: number; kinds: Partial<Record<Kind, number>>; unknown: number; period: string; findings: Finding[]; stats: string[]; }
 
 const RANK: Record<Sev, number> = { baja: 0, media: 1, alta: 2, critica: 3 };
@@ -53,10 +53,21 @@ const WEB_SIGS: { rule: string; label: string; re: RegExp; expuesto?: boolean }[
   { rule: 'cmdi', label: 'inyección de comandos', re: /(?:[;|`]|&&)\s*(?:cat|ls|id|whoami|uname|wget|curl|nc|bash|sh|powershell)(?:\s|$)|\$\((?:cat|id|whoami|curl|wget)|\/bin\/(?:ba)?sh|cmd\.exe/ },
   { rule: 'log4shell', label: 'Log4Shell (JNDI)', re: /\$\{\s*(jndi|\$\{)|\$\{(lower|upper|env):/ },
   { rule: 'xss', label: 'cross-site scripting', re: /<script|javascript:|onerror\s*=|onload\s*=|<svg[^>]*on\w+\s*=|<img[^>]*on\w+\s*=/ },
-  { rule: 'archivos', label: 'lectura de archivos sensibles (claves, repositorio, respaldos)', expuesto: true, re: /\/\.(env|git|aws|ssh|htpasswd|svn)\b|\/(wp-config\.php|config\.ya?ml|backup\.(zip|sql|tar)|dump\.sql|id_rsa|web\.config|phpinfo\.php)/ },
-  { rule: 'sondeo', label: 'búsqueda de paneles y servicios conocidos', re: /\/(wp-login\.php|xmlrpc\.php|phpmyadmin|pma|adminer|actuator|server-status|cgi-bin\/|vendor\/phpunit|solr\/admin|manager\/html|owa\/auth)/ },
+  { rule: 'archivos', label: 'lectura de archivos sensibles (claves, repositorio, respaldos)', expuesto: true, re: /\/\.(env|git|aws|ssh|htpasswd|svn|azure|kube|npmrc|vault-token|composer)\b|\/(wp-config\.php|config\.ya?ml|backup\.(zip|sql|tar)|dump\.sql|id_rsa|web\.config|_?phpinfo\.php|authorized_keys|access_?tokens\.(json|db))/ },
+  { rule: 'sondeo', label: 'búsqueda de paneles y servicios conocidos', re: /\/(wp-login\.php|xmlrpc\.php|wlwmanifest\.xml|phpmyadmin|pma|adminer|actuator|server-status|cgi-bin\/|vendor\/phpunit|solr\/admin|manager\/html|owa\/auth|_profiler|_debugbar|telescope\/requests|tmui\/login\.jsp)/ },
 ];
-const SCANNERS = /sqlmap|nikto|nmap|masscan|zgrab|nuclei|wpscan|dirbuster|gobuster|ffuf|feroxbuster|hydra|acunetix|nessus|openvas|burp|whatweb|zmeu|metasploit|l9explore|censys|shodan/i;
+/** Herramientas de ataque o de busqueda de una vulnerabilidad concreta (un agente "…-cve-2026-1234-detect"). */
+const SCANNERS = /sqlmap|nikto|nmap|masscan|zgrab|nuclei|wpscan|dirbuster|gobuster|ffuf|feroxbuster|hydra|acunetix|nessus|openvas|burp|whatweb|zmeu|metasploit|l9explore|cve-\d{4}-\d{3,}/i;
+/** Rastreadores que miden todo internet y se identifican: ruido de fondo, no un ataque dirigido. */
+const SURVEYORS = /censys|shodan|palo alto networks|cortex-xpanse|internet-?measurement|expanse|netcraft|binaryedge|onyphe|leakix|site-probe/i;
+/** La contraseña o el usuario no sirvieron (a diferencia de "no tienes sesion" o "no tienes permiso"). */
+const CRED_FAIL = /login failed|authentication fail|invalid (password|credentials)|bad credentials|wrong password|credenciales inv|contraseña incorrecta|usuario o contraseña/i;
+/** Rutas que solo cambian en un numero o un identificador cuentan como una sola. */
+const routeOf = (path: string) => path.split('?')[0].replace(/[0-9a-f]{8}-[0-9a-f-]{20,}|(?<=\/)\d+(?=\/|$)/g, ':id').slice(0, 120);
+const MAX_ROUTES = 400;
+const bump = (m: Map<string, Map<string, number>>, k: string, route: string) => { let r = m.get(k); if (!r) m.set(k, (r = new Map())); if (r.has(route) || r.size < MAX_ROUTES) inc(r, route); };
+/** Agrupa direcciones IPv4 por su red /24: un barrido suele venir de varias vecinas. */
+const sameNet = (ips: string[]) => { const nets = new Map<string, number>(); for (const a of ips) { const m = /^(\d+\.\d+\.\d+)\.\d+$/.exec(a); if (m) inc(nets, `${m[1]}.0/24`); } return top(nets, 1).filter(([, n]) => n >= 3)[0]; };
 const LOGIN_PATH = /\/(login|signin|sign-in|auth|session|sessions|token|oauth|wp-login\.php|ingresar|acceso|owner\/login)\b/i;
 const SENSITIVE_PORTS: Record<number, string> = { 21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 445: 'SMB', 1433: 'SQL Server', 3306: 'MySQL', 3389: 'Escritorio remoto', 5432: 'PostgreSQL', 5900: 'VNC', 6379: 'Redis', 9200: 'Elasticsearch', 27017: 'MongoDB' };
 const PLAIN_PORTS: Record<number, string> = { 21: 'FTP', 23: 'Telnet', 110: 'POP3', 143: 'IMAP' };
@@ -84,7 +95,7 @@ export function analyze(lines: string[]): Analysis {
   const seen = (k: Kind) => { kinds[k] = (kinds[k] ?? 0) + 1; };
   let unknown = 0, first = '', last = '', secrets = 0;
   // Web
-  const web = { total: 0, ips: new Map<string, number>(), s5: 0, notFound: new Map<string, number>(), loginFail: new Map<string, number>(), loginOkAfter: new Map<string, number>(), scanners: new Map<string, number>(), scannerNames: new Set<string>(),
+  const web = { total: 0, ips: new Map<string, number>(), s5: 0, notFound: new Map<string, Map<string, number>>(), denied: new Map<string, Map<string, number>>(), surveyors: new Map<string, number>(), surveyorNames: new Set<string>(), loginFail: new Map<string, number>(), loginOkAfter: new Map<string, number>(), scanners: new Map<string, number>(), scannerNames: new Set<string>(),
     sigs: new Map<string, { n: number; ok: number; ips: Map<string, number>; sample: string }>() };
   // Autenticacion del sistema
   const auth = { fail: new Map<string, number>(), invalid: new Map<string, number>(), users: new Map<string, number>(), okAfter: new Map<string, string>(), ok: new Map<string, number>(), rootPass: new Map<string, number>(), sudo: 0 };
@@ -98,30 +109,32 @@ export function analyze(lines: string[]): Analysis {
   const wz = { rules: new Map<string, number>(), worst: 0, where: new Map<string, number>(), low: 0 };
   const app = { errors: 0, fatal: 0, msgs: new Map<string, number>(), authFail: new Map<string, number>(), authFailTotal: 0 };
 
-  const webHit = (addr: string, method: string, rawPath: string, status: number, agent: string) => {
+  const webHit = (addr: string, method: string, rawPath: string, status: number, agent: string, credFail = false) => {
     seen('web'); web.total++;
     const a = ip(addr) || 'desconocida', path = decode(rawPath), probe = `${path} ${decode(agent)}`;
     inc(web.ips, a);
     if (status >= 500) web.s5++;
-    if (status === 404) inc(web.notFound, a);
-    const scanner = SCANNERS.exec(agent);
+    if (status === 404) bump(web.notFound, a, routeOf(path));
+    const scanner = SCANNERS.exec(agent), surveyor = scanner ? null : SURVEYORS.exec(agent);
     if (scanner) { inc(web.scanners, a); web.scannerNames.add(scanner[0].toLowerCase()); }
+    if (surveyor) { inc(web.surveyors, a); web.surveyorNames.add(surveyor[0].toLowerCase()); }
     for (const sig of WEB_SIGS) {
       if (!sig.re.test(sig.rule === 'log4shell' ? probe : path)) continue;
       let s = web.sigs.get(sig.rule); if (!s) web.sigs.set(sig.rule, (s = { n: 0, ok: 0, ips: new Map(), sample: '' }));
       s.n++; inc(s.ips, a); if (status >= 200 && status < 300) s.ok++; s.sample ||= safe(rawPath, 90);
     }
-    if (LOGIN_PATH.test(path) && method !== 'GET') {
-      if (status === 401 || status === 403 || status === 429) inc(web.loginFail, a);
-      else if (status < 400 && (web.loginFail.get(a) ?? 0) >= 10) inc(web.loginOkAfter, a);
-    }
+    // Un rechazo en el inicio de sesion es una contraseña fallida; en cualquier otra ruta es "sin sesion" o "sin permiso".
+    const login = LOGIN_PATH.test(path) && method !== 'GET', refused = status === 401 || status === 403;
+    if (credFail || (login && (refused || status === 429))) inc(web.loginFail, a);
+    else if (login && status < 400 && (web.loginFail.get(a) ?? 0) >= 10) inc(web.loginOkAfter, a);
+    else if (refused) bump(web.denied, a, routeOf(path));
   };
-  const appEvent = (level: string, msg: string, addr = '') => {
+  const appEvent = (level: string, msg: string, addr = '', web = false) => {
     seen('app');
     const lv = level.toLowerCase(), fatal = /^(fatal|crit|emerg|alert|panic)/.test(lv);
     if (fatal) app.fatal++;
     if (fatal || /^(err|severe)/.test(lv)) { app.errors++; inc(app.msgs, safe(redact(msg).replace(/\d+/g, 'N'), 70) || '(sin mensaje)'); }
-    if (AUTH_FAIL.test(msg)) { app.authFailTotal++; inc(app.authFail, ip(addr) || ip(/\b(?:\d{1,3}\.){3}\d{1,3}\b/.exec(msg)?.[0]) || 'origen no registrado'); }
+    if (!web && AUTH_FAIL.test(msg)) { app.authFailTotal++; inc(app.authFail, ip(addr) || ip(/\b(?:\d{1,3}\.){3}\d{1,3}\b/.exec(msg)?.[0]) || 'origen no registrado'); }
   };
 
   for (const raw of lines) {
@@ -148,9 +161,10 @@ export function analyze(lines: string[]): Analysis {
         }
         const status = Number(j.status ?? j.statusCode ?? j.res?.statusCode ?? j.response?.status), path = j.path ?? j.url ?? j.req?.url ?? j.request?.url ?? j.uri;
         const addr = j.ip ?? j.remote_addr ?? j.client_ip ?? j.remoteAddress ?? j.req?.remoteAddress ?? j.clientIp ?? j.src_ip ?? '';
-        if (status >= 100 && typeof path === 'string') webHit(String(addr), String(j.method ?? j.req?.method ?? 'GET'), path, status, String(j.user_agent ?? j.userAgent ?? j.req?.headers?.['user-agent'] ?? ''));
+        const msg = String(j.msg ?? j.message ?? j.error ?? j.err?.message ?? ''), isWeb = status >= 100 && typeof path === 'string';
+        if (isWeb) webHit(String(addr), String(j.method ?? j.req?.method ?? 'GET'), path, status, String(j.user_agent ?? j.userAgent ?? j.req?.headers?.['user-agent'] ?? ''), CRED_FAIL.test(msg));
         const lvl = j.level ?? j.severity ?? j.lvl ?? j.levelname ?? '', level = typeof lvl === 'number' ? (lvl >= 60 ? 'fatal' : lvl >= 50 ? 'error' : 'info') : String(lvl);
-        appEvent(level, String(j.msg ?? j.message ?? j.error ?? j.err?.message ?? ''), String(addr));
+        appEvent(level, msg, String(addr), isWeb);
         continue;
       }
     }
@@ -202,7 +216,7 @@ export function analyze(lines: string[]): Analysis {
     unknown++;
   }
 
-  const push = (rule: string, severity: Sev, title: string, detail: string) => findings.push({ rule, severity, title: safe(title, 140), detail: safe(detail, 400) });
+  const push = (rule: string, severity: Sev, title: string, detail: string, subject?: string) => findings.push({ rule, severity, title: safe(title, 140), detail: safe(detail, 400), ...(subject ? { subject: safe(subject, 60) } : {}) });
 
   // ---------- Reglas: acceso web ----------
   if (web.total) {
@@ -220,9 +234,27 @@ export function analyze(lines: string[]): Analysis {
       push('web_fuerza_bruta', got.length ? 'alta' : 'media', `Fuerza bruta contra el inicio de sesión web desde ${brute.length} ${brute.length === 1 ? 'dirección' : 'direcciones'}`,
         `Intentos rechazados: ${list(new Map(brute))}. ${got.length ? `Después de los fallos hubo ingresos aceptados desde ${got.slice(0, 3).join(', ')}: revisar esas cuentas y cerrar sus sesiones.` : 'Ninguno entró después. Limitar intentos por dirección y exigir verificación en dos pasos.'}`);
     }
-    const enumr = [...web.notFound.entries()].filter(([, n]) => n >= 40);
-    if (enumr.length) push('web_exploracion', 'media', `Exploración de rutas: ${enumr.length} ${enumr.length === 1 ? 'dirección acumula' : 'direcciones acumulan'} muchos errores 404`, `Principales: ${list(new Map(enumr))}. Es alguien buscando rutas ocultas; conviene bloquearlo o limitarle la velocidad.`);
+    else if (sum(web.loginFail) >= 50 && web.loginFail.size >= 10)
+      push('web_relleno_credenciales', 'media', `Fallos de inicio de sesión repartidos entre ${web.loginFail.size} direcciones (${sum(web.loginFail)} en total)`, `Ninguna dirección pasa de 10, pero juntas sí: puede ser relleno de credenciales con contraseñas filtradas. Principales: ${list(web.loginFail)}.`);
+    // 404: muchas rutas distintas es alguien explorando; la misma ruta una y otra vez es un cliente o una integracion rota.
+    const nf = [...web.notFound.entries()].map(([a, r]) => ({ a, n: sum(r), routes: r.size, top: top(r, 1)[0] })).filter((x) => x.n >= 40);
+    const enumr = nf.filter((x) => x.routes >= 15), stuck = nf.filter((x) => x.routes < 15);
+    if (enumr.length) {
+      const net = sameNet(enumr.map((x) => x.a));
+      push('web_exploracion', 'media', `Exploración de rutas: ${enumr.length} ${enumr.length === 1 ? 'dirección probó' : 'direcciones probaron'} muchas rutas que no existen`,
+        `Rutas distintas por dirección: ${list(new Map(enumr.map((x) => [x.a, x.routes])))}.${net ? ` ${net[1]} de ellas son de la misma red (${net[0]}): es un barrido coordinado.` : ''} Es alguien buscando rutas ocultas; conviene bloquearlo o limitarle la velocidad.`);
+    }
+    if (stuck.length) push('web_ruta_rota', 'baja', `${stuck.length === 1 ? 'Un cliente insiste' : `${stuck.length} clientes insisten`} en rutas que no existen`,
+      `${stuck.sort((x, y) => y.n - x.n).slice(0, 3).map((x) => `${x.a}: ${x.n} veces, sobre todo ${safe(x.top[0], 70)}`).join('; ')}. No es exploración: es la misma ruta una y otra vez. Suele ser una integración, una tarea programada o una comprobación de salud que apunta a una ruta equivocada; conviene corregirla.`);
+    // 401 y 403 fuera del inicio de sesion.
+    const denied = [...web.denied.entries()].map(([a, r]) => ({ a, n: sum(r), routes: r.size, top: top(r, 1)[0] }));
+    const walkers = denied.filter((x) => x.routes >= 15), stale = denied.filter((x) => x.routes < 15 && x.n >= 60);
+    if (walkers.length) push('web_sin_permiso', 'media', `Recorrido de rutas protegidas sin sesión o sin permiso desde ${walkers.length} ${walkers.length === 1 ? 'dirección' : 'direcciones'}`,
+      `Rutas protegidas distintas que fueron rechazadas: ${list(new Map(walkers.map((x) => [x.a, x.routes])))}. Alguien está probando qué partes de la aplicación responden sin iniciar sesión, o con una cuenta que no tiene permiso.`);
+    if (stale.length) push('web_sesion_vencida', 'baja', `${stale.length === 1 ? 'Un cliente sigue' : `${stale.length} clientes siguen`} consultando con la sesión vencida`,
+      `${stale.sort((x, y) => y.n - x.n).slice(0, 3).map((x) => `${x.a}: ${x.n} rechazos, sobre todo en ${safe(x.top[0], 70)}`).join('; ')}. No son contraseñas fallidas: es la misma ruta rechazada una y otra vez, lo habitual en una pestaña abierta cuya sesión venció. Conviene que la aplicación deje de consultar al recibir 401; si la dirección no es conocida, revisarla.`);
     if (web.scanners.size) push('web_escaner', 'media', `Herramientas de escaneo detectadas (${[...web.scannerNames].slice(0, 5).join(', ')})`, `${sum(web.scanners)} peticiones desde ${list(web.scanners)}.`);
+    if (web.surveyors.size) push('web_rastreadores', 'baja', `Rastreadores de internet identificados (${[...web.surveyorNames].slice(0, 5).join(', ')})`, `${sum(web.surveyors)} peticiones desde ${list(web.surveyors)}. Son servicios que recorren todo internet y se identifican; es ruido de fondo, pero lo que ven ellos lo ve cualquiera.`);
     if (web.s5 >= 20 && web.s5 / web.total >= 0.05) push('web_errores', 'media', `${web.s5} errores 5xx del servidor (${Math.round((web.s5 / web.total) * 100)} por ciento de las peticiones)`, 'Puede ser una caída, una sobrecarga o un intento de explotación que rompe la aplicación: revisar el registro de errores de esa misma hora.');
   }
 
@@ -232,7 +264,7 @@ export function analyze(lines: string[]): Analysis {
     const brute = [...auth.fail.entries()].filter(([, n]) => n >= 5), total = sum(auth.fail);
     if (auth.ok.size) stats.push(`Ingresos aceptados por SSH: ${list(auth.ok, 4)}.`);
     for (const [a, user] of [...auth.okAfter.entries()].slice(0, 3))
-      push('ssh_acceso_tras_fallos', 'critica', `Ingreso aceptado por SSH después de ${auth.fail.get(a)} intentos fallidos desde ${a}`, `Usuario: ${user}. Puede ser una contraseña adivinada: cerrar esa sesión, cambiar la contraseña, revisar llaves autorizadas y qué se ejecutó.`);
+      push('ssh_acceso_tras_fallos', 'critica', `Ingreso aceptado por SSH después de ${auth.fail.get(a)} intentos fallidos desde ${a}`, `Usuario: ${user}. Puede ser una contraseña adivinada: cerrar esa sesión, cambiar la contraseña, revisar llaves autorizadas y qué se ejecutó.`, a);
     if (brute.length) push('ssh_fuerza_bruta', brute.some(([, n]) => n >= 50) || total >= 300 ? 'alta' : 'media', `Fuerza bruta por SSH: ${total} intentos fallidos desde ${auth.fail.size} ${auth.fail.size === 1 ? 'dirección' : 'direcciones'}`,
       `Principales: ${list(new Map(brute))}. Usuarios más probados: ${list(auth.users, 5)}. Recomendado: solo llaves, sin ingreso de root, y fail2ban o límite en el cortafuegos.`);
     if (auth.rootPass.size) push('ssh_root_clave', 'alta', 'Ingreso de root por SSH con contraseña', `Desde ${list(auth.rootPass)}. Conviene desactivar el ingreso de root y el uso de contraseñas (PermitRootLogin no, PasswordAuthentication no).`);
