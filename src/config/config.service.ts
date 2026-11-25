@@ -211,7 +211,7 @@ export class ConfigService {
     this.deepseekModel = str('DEEPSEEK_MODEL', 'deepseek-flash');
     this.timezone = str('TIMEZONE', 'America/Bogota');
     this.defaultCity = str('DEFAULT_CITY', 'Sincelejo');
-    this.greeting = str('GREETING', '¡Hola! Soy Jano. ¿De qué quieres hablar?');
+    this.greeting = str('GREETING', '¡Hola! Soy Jano, tu asistente de seguridad.');
     this.maxSessions = int('MAX_SESSIONS', 2, 1);
     this.sessionMaxSeconds = int('SESSION_MAX_SECONDS', 600, 10);
     this.idleSeconds = int('IDLE_SECONDS', 120, 10);
@@ -332,7 +332,7 @@ export class ConfigService {
     this.contactTitle = str('CONTACT_TITLE', 'Hablemos por WhatsApp');
     this.contactCaption = str('CONTACT_CAPTION', 'Escanea para escribirle a Camilo');
     this.cardsFile = str('CARDS_FILE', 'content/tarjetas.json');
-    this.cardsEnabled = ['true', '1', 'si', 'sí'].includes(str('CARDS_ENABLED', 'false').toLowerCase());
+    this.cardsEnabled = ['true', '1', 'si', 'sí'].includes(str('CARDS_ENABLED', 'true').toLowerCase());
     this.visitorMemoryDays = int('VISITOR_MEMORY_DAYS', 90, 0);
     const ownerFile = str('OWNER_PROMPT_FILE', 'prompts/owner.md');
     this.ownerPrompt = existsSync(ownerFile) ? readFileSync(ownerFile, 'utf8').trim() : '';

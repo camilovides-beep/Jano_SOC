@@ -111,6 +111,16 @@ function visitorId() {
     return id;
   } catch { return undefined; }
 }
+// Los subtitulos se quitan solos un rato despues de que nadie habla (?subsms=0 los deja fijos).
+const SUBS_MS = (() => { const v = Number(new URLSearchParams(location.search).get('subsms')); return Number.isFinite(v) && v >= 0 && new URLSearchParams(location.search).has('subsms') ? v : 7000; })();
+let subsTimer = null;
+function fadeSubs() {
+  clearTimeout(subsTimer); if (!SUBS_MS) return;
+  subsTimer = setTimeout(() => {
+    if (state === 'speaking' || state === 'thinking') { fadeSubs(); return; } // todavia hay conversacion: se vuelve a mirar despues
+    $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
+  }, SUBS_MS);
+}
 let cardTimer = null;
 function showCard(card) {
   if (gallery) hideGallery(); // comparten el mismo lugar de la pantalla
@@ -119,7 +129,7 @@ function showCard(card) {
   $('card-qr').hidden = !card.qr; if (card.qr) $('card-qr').src = card.qr;
   $('card-caption').textContent = card.caption || '';
   $('card').hidden = false;
-  clearTimeout(cardTimer); cardTimer = setTimeout(hideCard, card.qr ? 30000 : 14000); // el QR se queda mas tiempo para alcanzar a escanearlo
+  clearTimeout(cardTimer); cardTimer = setTimeout(hideCard, card.qr ? 30000 : card.info ? 22000 : 14000); // el QR y la informacion pedida se quedan mas tiempo
 }
 function hideCard() { clearTimeout(cardTimer); $('card').hidden = true; }
 
@@ -178,12 +188,12 @@ function onMessage(msg) {
       if (msg.reason === 'suspension') { closeReason = ''; dormant = true; } // sigue suspendido, ya sin oir: solo despierta con un toque
       break;
     case 'user_partial':
-      if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
+      if (state !== 'speaking') { $('sub-user').textContent = msg.text; fadeSubs(); }
       lastTalk = performance.now();
       duckUntil = performance.now() + 2500; // la persona esta hablando: la musica baja un momento
       break;
     case 'user_final':
-      $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; hideCard(); setState('thinking'); break;
+      $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; hideCard(); setState('thinking'); fadeSubs(); break;
     case 'speech_start':
       stopSpeech(); speechId = msg.id; subShown = 0; player.begin(msg.sampleRate); backdrop.show(restScene()); break;
     case 'audio':
@@ -282,7 +292,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const playing = !!player && player.active;
   if (wasPlaying !== playing) { wasPlaying = playing; socket?.send({ type: 'playback', playing }); } // el servidor sabe cuando termina de sonar
-  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') $('sub-avatar').textContent = ''; setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
+  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); fadeSubs(); if (state === 'away') $('sub-avatar').textContent = ''; setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
   const t = playing ? player.time() : -1;
   const w = lips.update(state === 'speaking' ? t : -1, dt);
   for (const v of VISEMES) avatar.setMorph(v, Math.max(w[v], avatar.exprMouth[v] || 0));

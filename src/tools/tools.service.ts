@@ -138,7 +138,7 @@ export class ToolsService {
     // Alertas de seguridad (pedido por Camilo el 2026-11-19): un incidente real que cuentan en la conversacion abre una
     // alerta y el avatar se pone rojo hasta que el dueño la resuelva. En modo dueño la misma herramienta crea una alerta manual.
     if (security) this.tools.reportar_alerta = {
-      description: 'Abre una ALERTA DE SEGURIDAD: avisa a Camilo de inmediato y el avatar se pone en rojo hasta que la resuelvan. Úsala SOLO cuando la persona cuenta un incidente REAL que está pasando o acaba de pasar: ' +
+      description: 'Abre una ALERTA DE SEGURIDAD: avisa a Camilo de inmediato y queda abierta hasta que la resuelvan. Úsala SOLO cuando la persona cuenta un incidente REAL que está pasando o acaba de pasar: ' +
         'alguien intentando entrar al recinto, una persona sospechosa rondando, una alarma o cámara que se disparó, una puerta forzada, un acceso no autorizado a sistemas o cuentas, un equipo infectado, datos filtrados, una estafa en curso. ' +
         'NO la uses para preguntas generales, ejemplos, dudas, consejos ni cosas que pasaron hace tiempo. Si no está claro que sea real y actual, pregúntalo primero en una frase. En modo dueño también sirve para que Camilo cree una alerta a mano (por ejemplo, un simulacro).',
       parameters: { type: 'object', properties: {
@@ -152,7 +152,7 @@ export class ToolsService {
         if (typeof out === 'string') return `No se abrió la alerta: ${out}. Si es una emergencia, dile que llame a la línea de emergencias (123 en Colombia).`;
         return Number(out.count) > 1
           ? `Esa alerta ya estaba abierta (número ${out.id}); quedó sumada como repetición y Camilo ya está enterado. Díselo en una frase y sigue con los pasos urgentes.`
-          : `Alerta número ${out.id} abierta: Camilo ya recibió el aviso y la pantalla está en rojo. Dile en una frase que ya quedó reportada y enseguida los pasos urgentes para su caso; si hay riesgo para alguien, que llame a la línea de emergencias (123 en Colombia).`;
+          : `Alerta número ${out.id} abierta: Camilo ya recibió el aviso. Dile en una frase que ya quedó reportada y enseguida los pasos urgentes para su caso; si hay riesgo para alguien, que llame a la línea de emergencias (123 en Colombia).`;
       },
     };
     // Portafolio (pedido por Javier el 2026-11-18): casos reales. El detalle completo y la foto salen de aqui; el prompt trae un resumen.
@@ -199,7 +199,7 @@ export class ToolsService {
     this.ownerTools = {
       ...(security ? {
         ver_alertas: {
-          description: 'Lista las alertas de seguridad abiertas (y, si se pide, las resueltas recientes). Úsala cuando Camilo pregunte si hay alertas, qué pasó o por qué el avatar está en rojo.',
+          description: 'Lista las alertas de seguridad abiertas (y, si se pide, las resueltas recientes). Úsala cuando Camilo pregunte si hay alertas, qué pasó o por qué hay un aviso de alerta en pantalla.',
           parameters: { type: 'object', properties: { incluir_resueltas: { type: 'boolean', description: 'true para incluir también las últimas resueltas.' } }, required: [] },
           run: async (args: Record<string, unknown>) => {
             const rows = await security.list(12, args.incluir_resueltas === true ? '' : 'abierta');
@@ -209,12 +209,12 @@ export class ToolsService {
           },
         } as Tool,
         resolver_alerta: {
-          description: 'Marca como RESUELTA una alerta de seguridad; cuando no queda ninguna abierta el avatar vuelve al azul. Úsala solo cuando Camilo diga que una alerta ya se atendió o se puede cerrar ("resuelve la 3", "ya revisé lo de la cámara, ciérrala").',
+          description: 'Marca como RESUELTA una alerta de seguridad; cuando no queda ninguna abierta se quita el aviso de la pantalla. Úsala solo cuando Camilo diga que una alerta ya se atendió o se puede cerrar ("resuelve la 3", "ya revisé lo de la cámara, ciérrala").',
           parameters: { type: 'object', properties: { numero: { type: 'number', description: 'Número de la alerta.' }, nota: { type: 'string', description: 'Qué se hizo o por qué se cierra, con las palabras de Camilo.' } }, required: ['numero'] },
           run: async (args: Record<string, unknown>) => {
             const out = await security.resolve(Math.round(Number(args.numero)), 'voz', String(args.nota ?? ''));
             if (typeof out === 'string') return `No se resolvió: ${out}. Si no sabe el número, usa ver_alertas.`;
-            return `Alerta ${out.id} resuelta.${security.active ? ` Quedan ${security.active} abiertas.` : ' Ya no queda ninguna abierta: el avatar vuelve al azul.'} Confírmaselo en una frase.`;
+            return `Alerta ${out.id} resuelta.${security.active ? ` Quedan ${security.active} abiertas.` : ' Ya no queda ninguna abierta.'} Confírmaselo en una frase.`;
           },
         } as Tool,
       } : {}),
@@ -372,7 +372,7 @@ export class ToolsService {
               const out = await security.open({ source: 'sistema', origin: `Logs: ${src.name}`, severity: f.severity, title: f.title, detail: f.detail });
               if (typeof out !== 'string') ids.push(out.id);
             }
-            opened = ids.length ? `\nSe ${ids.length === 1 ? 'abrió la alerta número' : 'abrieron las alertas número'} ${ids.join(', ')} y la pantalla está en rojo.` : '\nNo se abrió ninguna alerta: no hay hallazgos altos ni críticos.';
+            opened = ids.length ? `\nSe ${ids.length === 1 ? 'abrió la alerta número' : 'abrieron las alertas número'} ${ids.join(', ')}.` : '\nNo se abrió ninguna alerta: no hay hallazgos altos ni críticos.';
           }
           return describeLogs(src.name, a) + opened + '\nCuéntaselo en voz: cuántos hallazgos hay, los dos o tres más graves con su origen y qué hacer primero. No leas listas de direcciones completas; ofrece el detalle si lo pide. ' +
             'Un intento no es una intrusión: di "intento" salvo que el hallazgo indique que tuvo éxito.';

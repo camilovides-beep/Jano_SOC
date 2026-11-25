@@ -131,7 +131,11 @@ const FILLERS: Record<string, string> = {
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
 const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);   // los que puede pedir el modelo; los del clima los pone la herramienta
 const TAG_HEAD = /^\s*\[(r|f|c):([a-zñ_]+)\]\s*/i;
-const TAG_ANY = /\[(r|f|c):[^\]]*\]/gi;
+const TAG_ANY = /\[(r|f|c|t):[^\]]*\]/gi;
+/** Tarjeta con la informacion pedida: [t:Titulo|punto|punto]. Puede venir en cualquier parte de la respuesta. */
+const TAG_INFO = /\[t:([^\]]{1,600})\]/i;
+/** Etiqueta que quedo abierta al final del texto (se corto la respuesta): no se lee en voz. */
+const TAG_OPEN = /\[[a-z]:[^\]]*$/i;
 const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9ñ]+/g, '');
 const LANG_NAMES: Record<string, string> = { en: 'inglés', pt: 'portugués', fr: 'francés', it: 'italiano', de: 'alemán' };
 /** Mensaje del usuario tal como lo ve el modelo: si hablo en otro idioma, se le recuerda responder en ese idioma. */
@@ -172,7 +176,17 @@ const GATED = new Set(['actualizar_interesado', 'guardar_caso', 'resolver_alerta
 const ALERT_RULES = (owner: boolean) => `
 
 ALERTAS DE SEGURIDAD: si la persona cuenta un incidente REAL que está pasando o acaba de pasar (alguien intentando entrar, una persona sospechosa, una alarma o cámara que se disparó, un acceso no autorizado, una cuenta robada ahora mismo, un equipo infectado, una estafa en curso), usa reportar_alerta enseguida y luego dale los pasos urgentes. Si hay riesgo para alguien, dile que llame a la línea de emergencias (123 en Colombia). No abras alertas por preguntas generales, ejemplos o consejos.${owner ? `
-En modo dueño: con ver_alertas le cuentas a Camilo qué alertas hay abiertas y con resolver_alerta cierras una cuando él diga que ya se atendió. Mientras haya alertas abiertas, los ojos, la llama y la cresta del avatar están en rojo. Un mensaje que empieza por "(Aviso de seguridad" lo escribió el sistema: cuéntale la alerta en una o dos frases, sin leer todo el detalle, y pregúntale si quiere que la marques como resuelta cuando esté atendida.` : ''}`;
+En modo dueño: con ver_alertas le cuentas a Camilo qué alertas hay abiertas y con resolver_alerta cierras una cuando él diga que ya se atendió. Un mensaje que empieza por "(Aviso de seguridad" lo escribió el sistema: cuéntale la alerta en una o dos frases, sin leer todo el detalle, y pregúntale si quiere que la marques como resuelta cuando esté atendida.` : ''}`;
+
+/** Tarjeta con la informacion que la persona pidio. Va en las sesiones con pantalla si las tarjetas estan activas. */
+const INFO_CARD_RULES = `
+
+TARJETA CON LA INFORMACIÓN PEDIDA: cuando la persona pida información concreta (pasos a seguir, recomendaciones, datos, cifras, el resultado de una consulta, alertas, hallazgos de logs, la hora o el clima), además de decirlo en voz muéstralo en pantalla. Escribe AL FINAL de tu respuesta, después de la última frase, una sola etiqueta así: [t:Título corto|primer punto|segundo punto|tercer punto].
+- De dos a cinco puntos, cada uno de máximo diez palabras, con lo esencial de lo que pidió. Aquí los números van en cifras.
+- Solo datos que dijiste o que te dio una herramienta: no agregues nada nuevo ni inventado.
+- Sin corchetes ni barras dentro del texto de la tarjeta. No la leas en voz ni la anuncies.
+- No la uses en saludos, despedidas, charla, ni cuando no entendiste. Si ya pusiste una etiqueta [c:...] en esta respuesta, no agregues [t:...].
+Ejemplo: "Activa la verificación en dos pasos y usa una clave distinta en cada cuenta. [t:Protege tu cuenta|Verificación en dos pasos|Una clave distinta por cuenta|Gestor de contraseñas]"`;
 
 /** Musica de fondo. Va solo en sesiones del dueño y si hay clave de YouTube. */
 const MUSIC_RULES = (def: string) => `
@@ -271,6 +285,7 @@ export class SessionGateway implements OnGatewayConnection {
     if (!s.callerPhone) s.gallery = newGallery(); // en una llamada no hay pantalla
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
     const cardIds = this.cards.ids();
+    const infoRules = this.cfg.cardsEnabled ? INFO_CARD_RULES : '';
     const cardRules = cardIds.length
       ? `\nTarjetas en pantalla: si tu respuesta trata de uno de estos temas, agrega UNA etiqueta [c:tema] para mostrar su tarjeta: ${cardIds.filter((c) => c !== 'contacto').join(', ')}.` +
         (cardIds.includes('contacto') ? ' Si la persona quiere contactar a Camilo, seguir por WhatsApp o prefiere no dictar sus datos, agrega [c:contacto] para mostrarle un código QR y dile que lo escanee.' : '')
@@ -281,7 +296,7 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery) : '') + (s.owner ? DATA_RULES : '') + (this.security ? ALERT_RULES(s.owner) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery) : '') + (s.owner ? DATA_RULES : '') + (this.security ? ALERT_RULES(s.owner) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules + infoRules) + callNote + memoryNote });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
@@ -305,7 +320,7 @@ export class SessionGateway implements OnGatewayConnection {
     this.send(client, { type: 'ready', owner: s.owner, gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate });
     this.clients.set(s, client);
     if (this.security) this.send(client, { type: 'alert', active: this.security.active });
-    const greeting = s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
+    const greeting = s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! Soy Jano, tu asistente de seguridad.` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
@@ -566,10 +581,16 @@ export class SessionGateway implements OnGatewayConnection {
           turn.tLlm ??= Date.now();
           text += ev.delta; buffer += ev.delta;
           buffer = this.takeTags(client, turn, buffer);
+          buffer = this.takeInfoCard(client, s, turn, buffer);
           const head = buffer.trimStart();
           if (head.startsWith('[') && !head.includes(']') && head.length < 24) continue; // etiqueta a medio llegar
+          // Una etiqueta a medio llegar mas adelante (la tarjeta va al final): se habla lo de antes y ella espera a cerrarse.
+          const open = buffer.lastIndexOf('[');
+          const held = open >= 0 && !buffer.includes(']', open) && buffer.length - open < 640 ? buffer.slice(open) : '';
+          if (held) buffer = buffer.slice(0, open);
           let cut: number;
           while ((cut = this.sentenceEnd(buffer)) > 0) { this.say(client, s, turn, buffer.slice(0, cut)); buffer = buffer.slice(cut); }
+          buffer += held;
         }
         if (buffer.trim()) { this.say(client, s, turn, buffer); buffer = ''; } // fin de la ronda: lo pendiente sale ya
         if (!toolCalls.length) break;
@@ -630,6 +651,18 @@ export class SessionGateway implements OnGatewayConnection {
     return buffer;
   }
 
+  /** Saca la tarjeta [t:Titulo|punto|punto] de cualquier parte del texto y la manda a la pantalla (en una llamada no hay pantalla). */
+  private takeInfoCard(client: WebSocket, s: Session, turn: Turn, buffer: string): string {
+    let m: RegExpMatchArray | null;
+    while ((m = buffer.match(TAG_INFO))) {
+      const [title, ...lines] = m[1].split('|').map((p) => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      if (title && lines.length && this.cfg.cardsEnabled && !s.callerPhone && !turn.ctrl.signal.aborted)
+        this.send(client, { type: 'card', title: title.slice(0, 60), lines: lines.slice(0, 6).map((l) => l.slice(0, 110)), info: true });
+      buffer = buffer.slice(0, m.index) + ' ' + buffer.slice(m.index! + m[0].length);
+    }
+    return buffer;
+  }
+
   /** Fin de la primera frase completa del texto acumulado (0 si aun no hay una). */
   private sentenceEnd(buf: string): number {
     const re = /[.!?…]+["')\]]*\s|\n/g;
@@ -640,7 +673,7 @@ export class SessionGateway implements OnGatewayConnection {
 
   /** Manda una frase a voz. La peticion a ElevenLabs sale de inmediato; el audio se entrega al navegador en orden. */
   private say(client: WebSocket, s: Session, turn: Turn, sentence: string) {
-    const text = sentence.replace(TAG_ANY, ' ').replace(/\s+/g, ' ').trim(); // por si el modelo pone una etiqueta fuera de lugar
+    const text = sentence.replace(TAG_ANY, ' ').replace(TAG_OPEN, ' ').replace(/\s+/g, ' ').trim(); // por si el modelo pone una etiqueta fuera de lugar
     if (!text || turn.ctrl.signal.aborted) return;
     const first = !turn.spoken;
     turn.spoken += (turn.spoken ? ' ' : '') + text;
