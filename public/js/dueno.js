@@ -245,7 +245,7 @@ function drawLeads() {
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`leads/${l.id}`, { method: 'DELETE' }); loadLeads(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
+      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(224,112,58,.22)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),
       l.status === 'nuevo' && Date.now() - Date.parse(l.created_at) > 2 * 86400000 ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Sin contactar hace ${Math.floor((Date.now() - Date.parse(l.created_at)) / 86400000)} días` }) : null,
       l.detail ? el('div', { textContent: l.detail }) : null, el('div', { className: 'row' }, sel, del), notes);
@@ -369,7 +369,7 @@ async function loadActions() {
   const sel = $('act-kind'); if (sel.options.length === 1) sel.append(...Object.entries(kinds).map(([k, v]) => el('option', { value: k, textContent: v.label })));
   $('act-count').textContent = `(${actions.length})`;
   $('act-chain').textContent = chain.ok ? `✓ Cadena íntegra (${n(chain.rows)} filas)` : `⚠ La cadena se rompe en la fila #${chain.brokenAt}: alguien cambió la bitácora por fuera`;
-  $('act-chain').style.background = chain.ok ? '' : 'rgba(217,89,38,.4)';
+  $('act-chain').style.background = chain.ok ? '' : 'rgba(200,16,46,.25)';
   $('act-list').replaceChildren(...(actions.length ? actions.map((a) => el('li', {},
     el('div', { className: 'row' }, el('strong', { textContent: kinds[a.kind]?.label || a.kind }), el('span', { className: 'tag', textContent: STATUS_LABEL[a.status] || a.status }), a.contact ? el('span', { className: 'tag', textContent: a.contact.includes('@') ? a.contact : '+' + a.contact }) : null),
     el('small', { textContent: `${fecha(a.at)} · disparador: ${a.trigger || 'sin dato'}${a.lead_id ? ` · interesado #${a.lead_id}` : ''}${Number(a.cost_usd) ? ` · ${Number(a.cost_usd).toFixed(4)} USD` : ''}${a.decisions ? ` · decisiones ${a.decisions}` : ''} · #${a.id}` }),
@@ -450,7 +450,7 @@ $('dec-test').addEventListener('submit', async (ev) => {
 // Mientras haya alguna abierta, el avatar esta en rojo en todas las pantallas. Solo aqui (o por voz, en modo dueño) se resuelven.
 const SEVERITY = { baja: '🟡 Baja', media: '🟠 Media', alta: '🔴 Alta', critica: '🚨 Crítica' };
 const ALERT_SOURCE = { sistema: 'Sistema externo', conversacion: 'Reporte en conversación', manipulacion: 'Intento de manipulación', manual: 'Creada por ti' };
-function markAlertTab(active) { const t = $('tab-alertas'); t.textContent = active ? `Alertas (${active})` : 'Alertas'; t.style.color = active ? '#ff6b6b' : ''; }
+function markAlertTab(active) { const t = $('tab-alertas'); t.textContent = active ? `Alertas (${active})` : 'Alertas'; t.style.color = active ? 'var(--red-hi)' : ''; }
 let alertTimer = null;
 async function loadAlerts() {
   const { active, alerts, webhook } = await json('alerts');
@@ -467,7 +467,7 @@ async function loadAlerts() {
       if (r && r.ok === false) { done.disabled = false; done.textContent = 'No se pudo, reintenta'; return; }
       loadAlerts();
     });
-    return el('li', { style: open ? 'border-left:4px solid #ff4d4d;padding-left:10px' : 'opacity:.7' },
+    return el('li', { style: open ? 'border-left:2px solid var(--red-hi);padding-left:12px' : 'opacity:.7' },
       el('div', { className: 'row' }, el('strong', { textContent: `#${a.id} ${a.title}` }), el('span', { className: 'tag', textContent: SEVERITY[a.severity] || a.severity }),
         el('span', { className: 'tag', textContent: ALERT_SOURCE[a.source] || a.source }), el('span', { className: 'tag', textContent: open ? 'Abierta' : 'Resuelta' }),
         Number(a.count) > 1 ? el('span', { className: 'tag', textContent: `Se repitió ${a.count} veces` }) : null),
